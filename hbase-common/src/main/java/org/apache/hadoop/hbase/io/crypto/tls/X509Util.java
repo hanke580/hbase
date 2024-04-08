@@ -105,6 +105,15 @@ public final class X509Util {
   public static final String HBASE_SERVER_NETTY_TLS_SUPPORTPLAINTEXT =
     "hbase.server.netty.tls.supportplaintext";
 
+  /**
+   * Set the SSL wrapSize for netty. This is only a maximum wrap size. Buffers smaller than this
+   * will not be consolidated, but buffers larger than this will be split into multiple wrap
+   * buffers. The netty default of 16k is not great for hbase which tends to return larger payloads
+   * than that, meaning most responses end up getting chunked up. This leads to more memory
+   * contention in netty's PoolArena. See https://github.com/netty/netty/pull/13551
+   */
+  public static final String HBASE_SERVER_NETTY_TLS_WRAP_SIZE = "hbase.server.netty.tls.wrapSize";
+  public static final int DEFAULT_HBASE_SERVER_NETTY_TLS_WRAP_SIZE = 1024 * 1024;
   //
   // Client-side specific configs
   //
@@ -114,6 +123,10 @@ public final class X509Util {
   public static final String HBASE_CLIENT_NETTY_TLS_HANDSHAKETIMEOUT =
     "hbase.client.netty.tls.handshaketimeout";
   public static final int DEFAULT_HANDSHAKE_DETECTION_TIMEOUT_MILLIS = 5000;
+
+  private static String[] getTls13Ciphers() {
+    return new String[] { "TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384" };
+  }
 
   private static String[] getGCMCiphers() {
     return new String[] { "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
@@ -136,14 +149,17 @@ public final class X509Util {
   // Note that this performance assumption might not hold true for architectures other than x86_64.
   private static final String[] DEFAULT_CIPHERS_JAVA9 =
     ObjectArrays.concat(getGCMCiphers(), getCBCCiphers(), String.class);
+  private static final String[] DEFAULT_CIPHERS_JAVA11 =
+    ObjectArrays.concat(ObjectArrays.concat(getTls13Ciphers(), getGCMCiphers(), String.class),
+      getCBCCiphers(), String.class);
 
   private static final String[] DEFAULT_CIPHERS_OPENSSL = getOpenSslFilteredDefaultCiphers();
 
   /**
    * Not all of our default ciphers are available in OpenSSL. Takes our default cipher lists and
-   * filters them to only those available in OpenSsl. Does GCM first, then CBC because GCM tends to
-   * be better and faster, and we don't need to worry about the java8 vs 9 performance issue if
-   * OpenSSL is handling it.
+   * filters them to only those available in OpenSsl. Prefers TLS 1.3, then GCM, then CBC because
+   * GCM tends to be better and faster, and we don't need to worry about the java8 vs 9 performance
+   * issue if OpenSSL is handling it.
    */
   private static String[] getOpenSslFilteredDefaultCiphers() {
     if (!OpenSsl.isAvailable()) {
@@ -152,16 +168,9 @@ public final class X509Util {
 
     Set<String> openSslSuites = OpenSsl.availableJavaCipherSuites();
     List<String> defaultSuites = new ArrayList<>();
-    for (String cipher : getGCMCiphers()) {
-      if (openSslSuites.contains(cipher)) {
-        defaultSuites.add(cipher);
-      }
-    }
-    for (String cipher : getCBCCiphers()) {
-      if (openSslSuites.contains(cipher)) {
-        defaultSuites.add(cipher);
-      }
-    }
+    Arrays.stream(getTls13Ciphers()).filter(openSslSuites::contains).forEach(defaultSuites::add);
+    Arrays.stream(getGCMCiphers()).filter(openSslSuites::contains).forEach(defaultSuites::add);
+    Arrays.stream(getCBCCiphers()).filter(openSslSuites::contains).forEach(defaultSuites::add);
     return defaultSuites.toArray(new String[0]);
   }
 
@@ -219,10 +228,19 @@ public final class X509Util {
 
   static String[] getDefaultCipherSuitesForJavaVersion(String javaVersion) {
     Objects.requireNonNull(javaVersion);
+
     if (javaVersion.matches("\\d+")) {
       // Must be Java 9 or later
-      LOG.debug("Using Java9+ optimized cipher suites for Java version {}", javaVersion);
-      return DEFAULT_CIPHERS_JAVA9;
+      int javaVersionInt = Integer.parseInt(javaVersion);
+      if (javaVersionInt >= 11) {
+        LOG.debug(
+          "Using Java11+ optimized cipher suites for Java version {}, including TLSv1.3 support",
+          javaVersion);
+        return DEFAULT_CIPHERS_JAVA11;
+      } else {
+        LOG.debug("Using Java9+ optimized cipher suites for Java version {}", javaVersion);
+        return DEFAULT_CIPHERS_JAVA9;
+      }
     } else if (javaVersion.startsWith("1.")) {
       // Must be Java 1.8 or earlier
       LOG.debug("Using Java8 optimized cipher suites for Java version {}", javaVersion);
@@ -281,7 +299,8 @@ public final class X509Util {
    * Adds SslProvider.OPENSSL if OpenSsl is available and enabled. In order to make it available,
    * one must ensure that a properly shaded netty-tcnative is on the classpath. Properly shaded
    * means relocated to be prefixed with "org.apache.hbase.thirdparty" like the rest of the netty
-   * classes.
+   * classes. We make available org.apache.hbase:hbase-openssl as a convenience module which one can
+   * use to pull in a shaded netty-tcnative statically linked against boringssl.
    */
   private static boolean configureOpenSslIfAvailable(SslContextBuilder sslContextBuilder,
     Configuration conf) {

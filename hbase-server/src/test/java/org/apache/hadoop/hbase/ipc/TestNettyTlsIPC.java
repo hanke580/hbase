@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.hadoop.hbase.security;
+package org.apache.hadoop.hbase.ipc;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -31,19 +31,14 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HBaseClassTestRule;
 import org.apache.hadoop.hbase.HBaseCommonTestingUtil;
 import org.apache.hadoop.hbase.HBaseServerBase;
+import org.apache.hadoop.hbase.Server;
+import org.apache.hadoop.hbase.client.ConnectionRegistryEndpoint;
 import org.apache.hadoop.hbase.codec.Codec;
 import org.apache.hadoop.hbase.io.crypto.tls.KeyStoreFileType;
 import org.apache.hadoop.hbase.io.crypto.tls.X509KeyType;
 import org.apache.hadoop.hbase.io.crypto.tls.X509TestContext;
 import org.apache.hadoop.hbase.io.crypto.tls.X509TestContextProvider;
 import org.apache.hadoop.hbase.io.crypto.tls.X509Util;
-import org.apache.hadoop.hbase.ipc.AbstractRpcClient;
-import org.apache.hadoop.hbase.ipc.AbstractTestIPC;
-import org.apache.hadoop.hbase.ipc.FailingNettyRpcServer;
-import org.apache.hadoop.hbase.ipc.NettyRpcClient;
-import org.apache.hadoop.hbase.ipc.NettyRpcServer;
-import org.apache.hadoop.hbase.ipc.RpcScheduler;
-import org.apache.hadoop.hbase.ipc.RpcServer;
 import org.apache.hadoop.hbase.ipc.RpcServer.BlockingServiceAndInterface;
 import org.apache.hadoop.hbase.testclassification.MediumTests;
 import org.apache.hadoop.hbase.testclassification.RPCTests;
@@ -72,39 +67,41 @@ public class TestNettyTlsIPC extends AbstractTestIPC {
 
   private static NettyEventLoopGroupConfig EVENT_LOOP_GROUP_CONFIG;
 
-  private static HBaseServerBase<?> SERVER;
-
-  @Parameterized.Parameter(0)
+  @Parameterized.Parameter(1)
   public X509KeyType caKeyType;
 
-  @Parameterized.Parameter(1)
+  @Parameterized.Parameter(2)
   public X509KeyType certKeyType;
 
-  @Parameterized.Parameter(2)
+  @Parameterized.Parameter(3)
   public char[] keyPassword;
 
-  @Parameterized.Parameter(3)
+  @Parameterized.Parameter(4)
   public boolean acceptPlainText;
 
-  @Parameterized.Parameter(4)
+  @Parameterized.Parameter(5)
   public boolean clientTlsEnabled;
 
   private X509TestContext x509TestContext;
 
+  // only netty rpc server supports TLS, so here we will only test NettyRpcServer
   @Parameterized.Parameters(
-      name = "{index}: caKeyType={0}, certKeyType={1}, keyPassword={2}, acceptPlainText={3},"
-        + " clientTlsEnabled={4}")
+      name = "{index}: rpcServerImpl={0}, caKeyType={1}, certKeyType={2}, keyPassword={3},"
+        + " acceptPlainText={4}, clientTlsEnabled={5}")
   public static List<Object[]> data() {
     List<Object[]> params = new ArrayList<>();
     for (X509KeyType caKeyType : X509KeyType.values()) {
       for (X509KeyType certKeyType : X509KeyType.values()) {
         for (char[] keyPassword : new char[][] { "".toCharArray(), "pa$$w0rd".toCharArray() }) {
           // do not accept plain text
-          params.add(new Object[] { caKeyType, certKeyType, keyPassword, false, true });
+          params.add(new Object[] { NettyRpcServer.class, caKeyType, certKeyType, keyPassword,
+            false, true });
           // support plain text and client enables tls
-          params.add(new Object[] { caKeyType, certKeyType, keyPassword, true, true });
+          params.add(
+            new Object[] { NettyRpcServer.class, caKeyType, certKeyType, keyPassword, true, true });
           // support plain text and client disables tls
-          params.add(new Object[] { caKeyType, certKeyType, keyPassword, true, false });
+          params.add(new Object[] { NettyRpcServer.class, caKeyType, certKeyType, keyPassword, true,
+            false });
         }
       }
     }
@@ -122,8 +119,6 @@ public class TestNettyTlsIPC extends AbstractTestIPC {
     PROVIDER = new X509TestContextProvider(CONF, dir);
     EVENT_LOOP_GROUP_CONFIG =
       NettyEventLoopGroupConfig.setup(CONF, TestNettyTlsIPC.class.getSimpleName());
-    SERVER = mock(HBaseServerBase.class);
-    when(SERVER.getEventLoopGroupConfig()).thenReturn(EVENT_LOOP_GROUP_CONFIG);
   }
 
   @AfterClass
@@ -154,9 +149,16 @@ public class TestNettyTlsIPC extends AbstractTestIPC {
   }
 
   @Override
-  protected RpcServer createRpcServer(String name, List<BlockingServiceAndInterface> services,
-    InetSocketAddress bindAddress, Configuration conf, RpcScheduler scheduler) throws IOException {
-    return new NettyRpcServer(SERVER, name, services, bindAddress, conf, scheduler, true);
+  protected RpcServer createRpcServer(Server server, String name,
+    List<BlockingServiceAndInterface> services, InetSocketAddress bindAddress, Configuration conf,
+    RpcScheduler scheduler) throws IOException {
+    HBaseServerBase<?> mockServer = mock(HBaseServerBase.class);
+    when(mockServer.getEventLoopGroupConfig()).thenReturn(EVENT_LOOP_GROUP_CONFIG);
+    if (server instanceof ConnectionRegistryEndpoint) {
+      String clusterId = ((ConnectionRegistryEndpoint) server).getClusterId();
+      when(mockServer.getClusterId()).thenReturn(clusterId);
+    }
+    return new NettyRpcServer(mockServer, name, services, bindAddress, conf, scheduler, true);
   }
 
   @Override
@@ -191,6 +193,19 @@ public class TestNettyTlsIPC extends AbstractTestIPC {
   protected RpcServer createTestFailingRpcServer(String name,
     List<BlockingServiceAndInterface> services, InetSocketAddress bindAddress, Configuration conf,
     RpcScheduler scheduler) throws IOException {
-    return new FailingNettyRpcServer(SERVER, name, services, bindAddress, conf, scheduler);
+    HBaseServerBase<?> mockServer = mock(HBaseServerBase.class);
+    when(mockServer.getEventLoopGroupConfig()).thenReturn(EVENT_LOOP_GROUP_CONFIG);
+    return new FailingNettyRpcServer(mockServer, name, services, bindAddress, conf, scheduler);
+  }
+
+  @Override
+  protected AbstractRpcClient<?> createBadAuthRpcClient(Configuration conf) {
+    return new NettyRpcClient(conf) {
+
+      @Override
+      protected NettyRpcConnection createConnection(ConnectionId remoteId) throws IOException {
+        return new BadAuthNettyRpcConnection(this, remoteId);
+      }
+    };
   }
 }

@@ -31,6 +31,7 @@ import org.apache.hadoop.hbase.client.RegionInfo;
 import org.apache.hadoop.hbase.client.RegionReplicaUtil;
 import org.apache.hadoop.hbase.client.TableDescriptor;
 import org.apache.hadoop.hbase.client.TableState;
+import org.apache.hadoop.hbase.fs.ErasureCodingUtils;
 import org.apache.hadoop.hbase.master.MasterCoprocessorHost;
 import org.apache.hadoop.hbase.master.MasterFileSystem;
 import org.apache.hadoop.hbase.procedure2.ProcedureStateSerializer;
@@ -54,6 +55,8 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.C
 @InterfaceAudience.Private
 public class CreateTableProcedure extends AbstractStateMachineTableProcedure<CreateTableState> {
   private static final Logger LOG = LoggerFactory.getLogger(CreateTableProcedure.class);
+
+  private static final int MAX_REGION_REPLICATION = 0x10000;
 
   private TableDescriptor tableDescriptor;
   private List<RegionInfo> newRegions;
@@ -83,10 +86,10 @@ public class CreateTableProcedure extends AbstractStateMachineTableProcedure<Cre
       switch (state) {
         case CREATE_TABLE_PRE_OPERATION:
           // Verify if we can create the table
-          boolean exists = !prepareCreate(env);
+          boolean success = prepareCreate(env);
           releaseSyncLatch();
 
-          if (exists) {
+          if (!success) {
             assert isFailed() : "the delete should have an exception here";
             return Flow.NO_MORE_STATE;
           }
@@ -98,6 +101,16 @@ public class CreateTableProcedure extends AbstractStateMachineTableProcedure<Cre
           DeleteTableProcedure.deleteFromFs(env, getTableName(), newRegions, true);
           newRegions = createFsLayout(env, tableDescriptor, newRegions);
           env.getMasterServices().getTableDescriptors().update(tableDescriptor, true);
+          if (tableDescriptor.getErasureCodingPolicy() != null) {
+            setNextState(CreateTableState.CREATE_TABLE_SET_ERASURE_CODING_POLICY);
+          } else {
+            setNextState(CreateTableState.CREATE_TABLE_ADD_TO_META);
+          }
+          break;
+        case CREATE_TABLE_SET_ERASURE_CODING_POLICY:
+          ErasureCodingUtils.setPolicy(env.getMasterFileSystem().getFileSystem(),
+            env.getMasterFileSystem().getRootDir(), getTableName(),
+            tableDescriptor.getErasureCodingPolicy());
           setNextState(CreateTableState.CREATE_TABLE_ADD_TO_META);
           break;
         case CREATE_TABLE_ADD_TO_META:
@@ -251,6 +264,14 @@ public class CreateTableProcedure extends AbstractStateMachineTableProcedure<Cre
         "Table " + getTableName().toString() + " should have at least one column family."));
       return false;
     }
+
+    int regionReplicationCount = tableDescriptor.getRegionReplication();
+    if (regionReplicationCount > MAX_REGION_REPLICATION) {
+      setFailure("master-create-table", new IllegalArgumentException(
+        "Region Replication cannot exceed " + MAX_REGION_REPLICATION + "."));
+      return false;
+    }
+
     if (!tableName.isSystemTable()) {
       // do not check rs group for system tables as we may block the bootstrap.
       Supplier<String> forWhom = () -> "table " + tableName;

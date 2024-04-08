@@ -726,6 +726,7 @@ public class HStore
   }
 
   private ImmutableCollection<HStoreFile> closeWithoutLock() throws IOException {
+    memstore.close();
     // Clear so metrics doesn't find them.
     ImmutableCollection<HStoreFile> result = storeEngine.getStoreFileManager().clearFiles();
     Collection<HStoreFile> compactedfiles = storeEngine.getStoreFileManager().clearCompactedFiles();
@@ -1616,7 +1617,7 @@ public class HStore
     for (HStoreFile hsf : this.storeEngine.getStoreFileManager().getStorefiles()) {
       StoreFileReader r = hsf.getReader();
       if (r == null) {
-        LOG.warn("StoreFile {} has a null Reader", hsf);
+        LOG.debug("StoreFile {} has a null Reader", hsf);
         continue;
       }
       this.storeSize.addAndGet(r.length());
@@ -1785,7 +1786,7 @@ public class HStore
   private LongStream getStoreFileAgeStream() {
     return this.storeEngine.getStoreFileManager().getStorefiles().stream().filter(sf -> {
       if (sf.getReader() == null) {
-        LOG.warn("StoreFile {} has a null Reader", sf);
+        LOG.debug("StoreFile {} has a null Reader", sf);
         return false;
       } else {
         return true;

@@ -23,6 +23,7 @@ import static org.junit.Assert.assertTrue;
 
 import java.io.IOException;
 import java.net.InetAddress;
+import java.security.cert.X509Certificate;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Optional;
@@ -233,6 +234,11 @@ public class TestRegionProcedureStore extends RegionProcedureStoreTestBase {
       }
 
       @Override
+      public byte[] getRequestAttribute(String key) {
+        return null;
+      }
+
+      @Override
       public int getRemotePort() {
         return 0;
       }
@@ -267,6 +273,11 @@ public class TestRegionProcedureStore extends RegionProcedureStoreTestBase {
 
       @Override
       public Optional<User> getRequestUser() {
+        return Optional.empty();
+      }
+
+      @Override
+      public Optional<X509Certificate[]> getClientCertificateChain() {
         return Optional.empty();
       }
 
@@ -314,6 +325,16 @@ public class TestRegionProcedureStore extends RegionProcedureStoreTestBase {
 
       @Override
       public void incrementResponseExceptionSize(long exceptionSize) {
+      }
+
+      @Override
+      public void updateFsReadTime(long latencyMillis) {
+
+      }
+
+      @Override
+      public long getFsReadTime() {
+        return 0;
       }
     };
   }
