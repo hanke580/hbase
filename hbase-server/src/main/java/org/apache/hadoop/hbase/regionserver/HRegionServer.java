@@ -3153,6 +3153,7 @@ public class HRegionServer extends Thread
   public static void main(String[] args) {
     LOG.info("STARTING executorService " + HRegionServer.class.getSimpleName());
     VersionInfo.logVersion();
+    org.zlab.ocov.tracker.Runtime.init();
     Configuration conf = HBaseConfiguration.create();
     @SuppressWarnings("unchecked")
     Class<? extends HRegionServer> regionServerClass = (Class<? extends HRegionServer>) conf
