@@ -3308,6 +3308,7 @@ public class HMaster extends HRegionServer implements MasterServices {
   public static void main(String[] args) {
     LOG.info("STARTING service " + HMaster.class.getSimpleName());
     VersionInfo.logVersion();
+    org.zlab.ocov.tracker.Runtime.init();
     new HMasterCommandLine(HMaster.class).doMain(args);
   }
 
