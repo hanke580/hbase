@@ -1,5 +1,4 @@
 /**
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -19,7 +18,6 @@
 package org.apache.hadoop.hbase.io.hfile;
 
 import org.apache.hbase.thirdparty.com.google.common.collect.MinMaxPriorityQueue;
-
 import org.apache.yetus.audience.InterfaceAudience;
 import org.apache.hadoop.hbase.io.HeapSize;
 
@@ -39,72 +37,74 @@ import org.apache.hadoop.hbase.io.HeapSize;
 @InterfaceAudience.Private
 public class LruCachedBlockQueue implements HeapSize {
 
-  private MinMaxPriorityQueue<LruCachedBlock> queue;
+    private MinMaxPriorityQueue<LruCachedBlock> queue;
 
-  private long heapSize;
-  private long maxSize;
+    private long heapSize;
 
-  /**
-   * @param maxSize the target size of elements in the queue
-   * @param blockSize expected average size of blocks
-   */
-  public LruCachedBlockQueue(long maxSize, long blockSize) {
-    int initialSize = (int)(maxSize / blockSize);
-    if(initialSize == 0) initialSize++;
-    queue = MinMaxPriorityQueue.expectedSize(initialSize).create();
-    heapSize = 0;
-    this.maxSize = maxSize;
-  }
+    private long maxSize;
 
-  /**
-   * Attempt to add the specified cached block to this queue.
-   *
-   * <p>If the queue is smaller than the max size, or if the specified element
-   * is ordered before the smallest element in the queue, the element will be
-   * added to the queue.  Otherwise, there is no side effect of this call.
-   * @param cb block to try to add to the queue
-   */
-  public void add(LruCachedBlock cb) {
-    if(heapSize < maxSize) {
-      queue.add(cb);
-      heapSize += cb.heapSize();
-    } else {
-      LruCachedBlock head = queue.peek();
-      if(cb.compareTo(head) > 0) {
-        heapSize += cb.heapSize();
-        heapSize -= head.heapSize();
-        if(heapSize > maxSize) {
-          queue.poll();
-        } else {
-          heapSize += head.heapSize();
-        }
-        queue.add(cb);
-      }
+    /**
+     * @param maxSize the target size of elements in the queue
+     * @param blockSize expected average size of blocks
+     */
+    public LruCachedBlockQueue(long maxSize, long blockSize) {
+        int initialSize = (int) (maxSize / blockSize);
+        if (initialSize == 0)
+            initialSize++;
+        queue = MinMaxPriorityQueue.expectedSize(initialSize).create();
+        heapSize = 0;
+        this.maxSize = maxSize;
     }
-  }
 
-  /**
-   * @return The next element in this queue, or {@code null} if the queue is
-   * empty.
-   */
-  public LruCachedBlock poll() {
-    return queue.poll();
-  }
+    /**
+     * Attempt to add the specified cached block to this queue.
+     *
+     * <p>If the queue is smaller than the max size, or if the specified element
+     * is ordered before the smallest element in the queue, the element will be
+     * added to the queue.  Otherwise, there is no side effect of this call.
+     * @param cb block to try to add to the queue
+     */
+    public void add(LruCachedBlock cb) {
+        if (heapSize < maxSize) {
+            queue.add(cb);
+            heapSize += cb.heapSize();
+        } else {
+            LruCachedBlock head = queue.peek();
+            if (cb.compareTo(head) > 0) {
+                heapSize += cb.heapSize();
+                heapSize -= head.heapSize();
+                if (heapSize > maxSize) {
+                    queue.poll();
+                } else {
+                    heapSize += head.heapSize();
+                }
+                queue.add(cb);
+            }
+        }
+    }
 
-  /**
-   * @return The last element in this queue, or {@code null} if the queue is
-   * empty.
-   */
-  public LruCachedBlock pollLast() {
-    return queue.pollLast();
-  }
+    /**
+     * @return The next element in this queue, or {@code null} if the queue is
+     * empty.
+     */
+    public LruCachedBlock poll() {
+        return queue.poll();
+    }
 
-  /**
-   * Total size of all elements in this queue.
-   * @return size of all elements currently in queue, in bytes
-   */
-  @Override
-  public long heapSize() {
-    return heapSize;
-  }
+    /**
+     * @return The last element in this queue, or {@code null} if the queue is
+     * empty.
+     */
+    public LruCachedBlock pollLast() {
+        return queue.pollLast();
+    }
+
+    /**
+     * Total size of all elements in this queue.
+     * @return size of all elements currently in queue, in bytes
+     */
+    @Override
+    public long heapSize() {
+        return heapSize;
+    }
 }

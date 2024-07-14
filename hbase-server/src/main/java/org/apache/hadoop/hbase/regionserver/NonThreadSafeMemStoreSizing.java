@@ -29,60 +29,64 @@ import org.apache.yetus.audience.InterfaceAudience;
  */
 @InterfaceAudience.Private
 class NonThreadSafeMemStoreSizing implements MemStoreSizing {
-  private long dataSize = 0;
-  private long heapSize = 0;
-  private long offHeapSize = 0;
-  private int cellsCount = 0;
 
-  NonThreadSafeMemStoreSizing() {
-    this(0, 0, 0, 0);
-  }
+    private long dataSize = 0;
 
-  NonThreadSafeMemStoreSizing(MemStoreSize mss) {
-    this(mss.getDataSize(), mss.getHeapSize(), mss.getOffHeapSize(), mss.getCellsCount());
-  }
+    private long heapSize = 0;
 
-  NonThreadSafeMemStoreSizing(long dataSize, long heapSize, long offHeapSize, int cellsCount) {
-    incMemStoreSize(dataSize, heapSize, offHeapSize, cellsCount);
-  }
+    private long offHeapSize = 0;
 
-  @Override
-  public MemStoreSize getMemStoreSize() {
-    return new MemStoreSize(this.dataSize, this.heapSize, this.offHeapSize, this.cellsCount);
-  }
+    private int cellsCount = 0;
 
-  @Override
-  public long incMemStoreSize(long dataSizeDelta, long heapSizeDelta,
-      long offHeapSizeDelta, int cellsCountDelta) {
-    this.offHeapSize += offHeapSizeDelta;
-    this.heapSize += heapSizeDelta;
-    this.dataSize += dataSizeDelta;
-    this.cellsCount += cellsCountDelta;
-    return this.dataSize;
-  }
+    NonThreadSafeMemStoreSizing() {
+        this(0, 0, 0, 0);
+    }
 
-  @Override
-  public long getDataSize() {
-    return dataSize;
-  }
+    NonThreadSafeMemStoreSizing(MemStoreSize mss) {
+        this(mss.getDataSize(), mss.getHeapSize(), mss.getOffHeapSize(), mss.getCellsCount());
+    }
 
-  @Override
-  public long getHeapSize() {
-    return heapSize;
-  }
+    NonThreadSafeMemStoreSizing(long dataSize, long heapSize, long offHeapSize, int cellsCount) {
+        incMemStoreSize(dataSize, heapSize, offHeapSize, cellsCount);
+    }
 
-  @Override
-  public long getOffHeapSize() {
-    return offHeapSize;
-  }
+    @Override
+    public MemStoreSize getMemStoreSize() {
+        return new MemStoreSize(this.dataSize, this.heapSize, this.offHeapSize, this.cellsCount);
+    }
 
-  @Override
-  public int getCellsCount() {
-    return cellsCount;
-  }
+    @Override
+    public long incMemStoreSize(long dataSizeDelta, long heapSizeDelta, long offHeapSizeDelta, int cellsCountDelta) {
+        this.offHeapSize += offHeapSizeDelta;
+        this.heapSize += heapSizeDelta;
+        org.zlab.ocov.tracker.Runtime.update(this, 81, dataSizeDelta, heapSizeDelta, offHeapSizeDelta, cellsCountDelta);
+        this.dataSize += dataSizeDelta;
+        this.cellsCount += cellsCountDelta;
+        return this.dataSize;
+    }
 
-  @Override
-  public String toString() {
-    return getMemStoreSize().toString();
-  }
+    @Override
+    public long getDataSize() {
+        return dataSize;
+    }
+
+    @Override
+    public long getHeapSize() {
+        return heapSize;
+    }
+
+    @Override
+    public long getOffHeapSize() {
+        return offHeapSize;
+    }
+
+    @Override
+    public int getCellsCount() {
+        return cellsCount;
+    }
+
+    @Override
+    public String toString() {
+        return getMemStoreSize().toString();
+    }
 }

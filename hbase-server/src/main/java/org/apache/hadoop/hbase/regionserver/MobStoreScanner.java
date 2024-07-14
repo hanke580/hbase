@@ -1,5 +1,4 @@
 /**
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -21,7 +20,6 @@ package org.apache.hadoop.hbase.regionserver;
 import java.io.IOException;
 import java.util.List;
 import java.util.NavigableSet;
-
 import org.apache.hadoop.hbase.Cell;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.mob.MobUtils;
@@ -34,51 +32,53 @@ import org.apache.yetus.audience.InterfaceAudience;
 @InterfaceAudience.Private
 public class MobStoreScanner extends StoreScanner {
 
-  private boolean cacheMobBlocks = false;
-  private boolean rawMobScan = false;
-  private boolean readEmptyValueOnMobCellMiss = false;
-  private final HMobStore mobStore;
+    private boolean cacheMobBlocks = false;
 
-  public MobStoreScanner(HStore store, ScanInfo scanInfo, Scan scan,
-      final NavigableSet<byte[]> columns, long readPt) throws IOException {
-    super(store, scanInfo, scan, columns, readPt);
-    cacheMobBlocks = MobUtils.isCacheMobBlocks(scan);
-    rawMobScan = MobUtils.isRawMobScan(scan);
-    readEmptyValueOnMobCellMiss = MobUtils.isReadEmptyValueOnMobCellMiss(scan);
-    if (!(store instanceof HMobStore)) {
-      throw new IllegalArgumentException("The store " + store + " is not a HMobStore");
-    }
-    mobStore = (HMobStore) store;
-  }
+    private boolean rawMobScan = false;
 
-  /**
-   * Firstly reads the cells from the HBase. If the cell are a reference cell (which has the
-   * reference tag), the scanner need seek this cell from the mob file, and use the cell found
-   * from the mob file as the result.
-   */
-  @Override
-  public boolean next(List<Cell> outResult, ScannerContext ctx) throws IOException {
-    boolean result = super.next(outResult, ctx);
-    if (!rawMobScan) {
-      // retrieve the mob data
-      if (outResult.isEmpty()) {
-        return result;
-      }
-      long mobKVCount = 0;
-      long mobKVSize = 0;
-      for (int i = 0; i < outResult.size(); i++) {
-        Cell cell = outResult.get(i);
-        if (MobUtils.isMobReferenceCell(cell)) {
-          Cell mobCell = mobStore
-            .resolve(cell, cacheMobBlocks, readPt, readEmptyValueOnMobCellMiss);
-          mobKVCount++;
-          mobKVSize += mobCell.getValueLength();
-          outResult.set(i, mobCell);
+    private boolean readEmptyValueOnMobCellMiss = false;
+
+    private final HMobStore mobStore;
+
+    public MobStoreScanner(HStore store, ScanInfo scanInfo, Scan scan, final NavigableSet<byte[]> columns, long readPt) throws IOException {
+        super(store, scanInfo, scan, columns, readPt);
+        cacheMobBlocks = MobUtils.isCacheMobBlocks(scan);
+        rawMobScan = MobUtils.isRawMobScan(scan);
+        readEmptyValueOnMobCellMiss = MobUtils.isReadEmptyValueOnMobCellMiss(scan);
+        if (!(store instanceof HMobStore)) {
+            throw new IllegalArgumentException("The store " + store + " is not a HMobStore");
         }
-      }
-      mobStore.updateMobScanCellsCount(mobKVCount);
-      mobStore.updateMobScanCellsSize(mobKVSize);
+        mobStore = (HMobStore) store;
     }
-    return result;
-  }
+
+    /**
+     * Firstly reads the cells from the HBase. If the cell are a reference cell (which has the
+     * reference tag), the scanner need seek this cell from the mob file, and use the cell found
+     * from the mob file as the result.
+     */
+    @Override
+    public boolean next(List<Cell> outResult, ScannerContext ctx) throws IOException {
+        boolean result = super.next(outResult, ctx);
+        if (!rawMobScan) {
+            // retrieve the mob data
+            if (outResult.isEmpty()) {
+                return result;
+            }
+            long mobKVCount = 0;
+            long mobKVSize = 0;
+            for (int i = 0; i < outResult.size(); i++) {
+                Cell cell = outResult.get(i);
+                if (MobUtils.isMobReferenceCell(cell)) {
+                    Cell mobCell = mobStore.resolve(cell, cacheMobBlocks, readPt, readEmptyValueOnMobCellMiss);
+                    mobKVCount++;
+                    mobKVSize += mobCell.getValueLength();
+                    outResult.set(i, mobCell);
+                    org.zlab.ocov.tracker.Runtime.update(outResult, 75, outResult, ctx);
+                }
+            }
+            mobStore.updateMobScanCellsCount(mobKVCount);
+            mobStore.updateMobScanCellsSize(mobKVSize);
+        }
+        return result;
+    }
 }

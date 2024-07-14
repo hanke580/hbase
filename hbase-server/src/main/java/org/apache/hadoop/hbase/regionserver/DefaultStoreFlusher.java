@@ -1,5 +1,4 @@
 /**
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -21,7 +20,6 @@ package org.apache.hadoop.hbase.regionserver;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,56 +34,54 @@ import org.apache.hadoop.util.StringUtils;
  */
 @InterfaceAudience.Private
 public class DefaultStoreFlusher extends StoreFlusher {
-  private static final Logger LOG = LoggerFactory.getLogger(DefaultStoreFlusher.class);
-  private final Object flushLock = new Object();
 
-  public DefaultStoreFlusher(Configuration conf, HStore store) {
-    super(conf, store);
-  }
+    private static final Logger LOG = LoggerFactory.getLogger(DefaultStoreFlusher.class);
 
-  @Override
-  public List<Path> flushSnapshot(MemStoreSnapshot snapshot, long cacheFlushId,
-      MonitoredTask status, ThroughputController throughputController,
-      FlushLifeCycleTracker tracker) throws IOException {
-    ArrayList<Path> result = new ArrayList<>();
-    int cellsCount = snapshot.getCellsCount();
-    if (cellsCount == 0) return result; // don't flush if there are no entries
+    private final Object flushLock = new Object();
 
-    // Use a store scanner to find which rows to flush.
-    long smallestReadPoint = store.getSmallestReadPoint();
-    InternalScanner scanner = createScanner(snapshot.getScanners(), smallestReadPoint, tracker);
-    StoreFileWriter writer;
-    try {
-      // TODO:  We can fail in the below block before we complete adding this flush to
-      //        list of store files.  Add cleanup of anything put on filesystem if we fail.
-      synchronized (flushLock) {
-        status.setStatus("Flushing " + store + ": creating writer");
-        // Write the map out to the disk
-        writer = store.createWriterInTmp(cellsCount,
-            store.getColumnFamilyDescriptor().getCompressionType(), false, true,
-            snapshot.isTagsPresent(), false);
-        IOException e = null;
-        try {
-          performFlush(scanner, writer, smallestReadPoint, throughputController);
-        } catch (IOException ioe) {
-          e = ioe;
-          // throw the exception out
-          throw ioe;
-        } finally {
-          if (e != null) {
-            writer.close();
-          } else {
-            finalizeWriter(writer, cacheFlushId, status);
-          }
-        }
-      }
-    } finally {
-      scanner.close();
+    public DefaultStoreFlusher(Configuration conf, HStore store) {
+        super(conf, store);
     }
-    LOG.info("Flushed memstore data size={} at sequenceid={} (bloomFilter={}), to={}",
-        StringUtils.byteDesc(snapshot.getDataSize()), cacheFlushId, writer.hasGeneralBloom(),
-        writer.getPath());
-    result.add(writer.getPath());
-    return result;
-  }
+
+    @Override
+    public List<Path> flushSnapshot(MemStoreSnapshot snapshot, long cacheFlushId, MonitoredTask status, ThroughputController throughputController, FlushLifeCycleTracker tracker) throws IOException {
+        ArrayList<Path> result = new ArrayList<>();
+        int cellsCount = snapshot.getCellsCount();
+        // don't flush if there are no entries
+        if (cellsCount == 0)
+            return result;
+        // Use a store scanner to find which rows to flush.
+        long smallestReadPoint = store.getSmallestReadPoint();
+        InternalScanner scanner = createScanner(snapshot.getScanners(), smallestReadPoint, tracker);
+        StoreFileWriter writer;
+        try {
+            // TODO:  We can fail in the below block before we complete adding this flush to
+            //        list of store files.  Add cleanup of anything put on filesystem if we fail.
+            synchronized (flushLock) {
+                status.setStatus("Flushing " + store + ": creating writer");
+                // Write the map out to the disk
+                writer = store.createWriterInTmp(cellsCount, store.getColumnFamilyDescriptor().getCompressionType(), false, true, snapshot.isTagsPresent(), false);
+                org.zlab.ocov.tracker.Runtime.update(writer, 59, snapshot, cacheFlushId, status, throughputController, tracker);
+                IOException e = null;
+                try {
+                    performFlush(scanner, writer, smallestReadPoint, throughputController);
+                } catch (IOException ioe) {
+                    e = ioe;
+                    // throw the exception out
+                    throw ioe;
+                } finally {
+                    if (e != null) {
+                        writer.close();
+                    } else {
+                        finalizeWriter(writer, cacheFlushId, status);
+                    }
+                }
+            }
+        } finally {
+            scanner.close();
+        }
+        LOG.info("Flushed memstore data size={} at sequenceid={} (bloomFilter={}), to={}", StringUtils.byteDesc(snapshot.getDataSize()), cacheFlushId, writer.hasGeneralBloom(), writer.getPath());
+        result.add(writer.getPath());
+        return result;
+    }
 }

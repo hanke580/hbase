@@ -19,10 +19,8 @@
 package org.apache.hadoop.hbase.regionserver;
 
 import java.util.Iterator;
-
 import org.apache.hadoop.hbase.Cell;
 import org.apache.yetus.audience.InterfaceAudience;
-
 
 /**
  * A basic SegmentScanner used against an ImmutableScanner snapshot
@@ -33,69 +31,73 @@ import org.apache.yetus.audience.InterfaceAudience;
  */
 @InterfaceAudience.Private
 public class SnapshotSegmentScanner extends NonReversedNonLazyKeyValueScanner {
-  private final ImmutableSegment segment;
-  private Iterator<Cell> iter;
-  private Cell current;
 
-  public SnapshotSegmentScanner(ImmutableSegment segment) {
-    this.segment = segment;
-    this.segment.incScannerCount();
-    this.iter = createIterator(this.segment);
-    if (this.iter.hasNext()){
-      this.current = this.iter.next();
+    private final ImmutableSegment segment;
+
+    private Iterator<Cell> iter;
+
+    private Cell current;
+
+    public SnapshotSegmentScanner(ImmutableSegment segment) {
+        this.segment = segment;
+        this.segment.incScannerCount();
+        this.iter = createIterator(this.segment);
+        if (this.iter.hasNext()) {
+            this.current = this.iter.next();
+        }
     }
-  }
 
-  private static Iterator<Cell> createIterator(Segment segment) {
-    return segment.getCellSet().iterator();
-  }
-
-  @Override
-  public Cell peek() {
-    return current;
-  }
-
-  @Override
-  public Cell next() {
-    Cell oldCurrent = current;
-    if(iter.hasNext()){
-      current = iter.next();
-    } else {
-      current = null;
+    private static Iterator<Cell> createIterator(Segment segment) {
+        return segment.getCellSet().iterator();
     }
-    return oldCurrent;
-  }
 
-  @Override
-  public boolean seek(Cell seekCell) {
-    // restart iterator
-    this.iter = createIterator(this.segment);
-    return reseek(seekCell);
-  }
-
-  @Override
-  public boolean reseek(Cell seekCell) {
-    while (this.iter.hasNext()){
-      Cell next = this.iter.next();
-      int ret = this.segment.getComparator().compare(next, seekCell);
-      if (ret >= 0) {
-        this.current = next;
-        return true;
-      }
+    @Override
+    public Cell peek() {
+        return current;
     }
-    return false;
-  }
 
-  /**
-   * @see KeyValueScanner#getScannerOrder()
-   */
-  @Override
-  public long getScannerOrder() {
-    return 0;
-  }
+    @Override
+    public Cell next() {
+        Cell oldCurrent = current;
+        if (iter.hasNext()) {
+            current = iter.next();
+        } else {
+            current = null;
+        }
+        return oldCurrent;
+    }
 
-  @Override
-  public void close() {
-    this.segment.decScannerCount();
-  }
+    @Override
+    public boolean seek(Cell seekCell) {
+        // restart iterator
+        this.iter = createIterator(this.segment);
+        org.zlab.ocov.tracker.Runtime.update(this, 45, seekCell);
+        return reseek(seekCell);
+    }
+
+    @Override
+    public boolean reseek(Cell seekCell) {
+        while (this.iter.hasNext()) {
+            Cell next = this.iter.next();
+            int ret = this.segment.getComparator().compare(next, seekCell);
+            if (ret >= 0) {
+                this.current = next;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * @see KeyValueScanner#getScannerOrder()
+     */
+    @Override
+    public long getScannerOrder() {
+        return 0;
+    }
+
+    @Override
+    public void close() {
+        this.segment.decScannerCount();
+    }
 }

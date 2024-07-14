@@ -15,7 +15,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
 package org.apache.hadoop.hbase.snapshot;
 
 import java.io.IOException;
@@ -26,7 +25,6 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorCompletionService;
-
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
@@ -57,144 +55,135 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.SnapshotProtos.Snapshot
  */
 @InterfaceAudience.Private
 public final class SnapshotManifestV2 {
-  private static final Logger LOG = LoggerFactory.getLogger(SnapshotManifestV2.class);
 
-  public static final int DESCRIPTOR_VERSION = 2;
+    private static final Logger LOG = LoggerFactory.getLogger(SnapshotManifestV2.class);
 
-  public static final String SNAPSHOT_MANIFEST_PREFIX = "region-manifest.";
+    public static final int DESCRIPTOR_VERSION = 2;
 
-  private SnapshotManifestV2() {}
+    public static final String SNAPSHOT_MANIFEST_PREFIX = "region-manifest.";
 
-  static class ManifestBuilder implements SnapshotManifest.RegionVisitor<
-                    SnapshotRegionManifest.Builder, SnapshotRegionManifest.FamilyFiles.Builder> {
-    private final Configuration conf;
-    private final Path snapshotDir;
-    private final FileSystem fs;
-
-    public ManifestBuilder(final Configuration conf, final FileSystem fs, final Path snapshotDir) {
-      this.snapshotDir = snapshotDir;
-      this.conf = conf;
-      this.fs = fs;
+    private SnapshotManifestV2() {
     }
 
-    @Override
-    public SnapshotRegionManifest.Builder regionOpen(final RegionInfo regionInfo) {
-      SnapshotRegionManifest.Builder manifest = SnapshotRegionManifest.newBuilder();
-      manifest.setRegionInfo(ProtobufUtil.toRegionInfo(regionInfo));
-      return manifest;
-    }
+    static class ManifestBuilder implements SnapshotManifest.RegionVisitor<SnapshotRegionManifest.Builder, SnapshotRegionManifest.FamilyFiles.Builder> {
 
-    @Override
-    public void regionClose(final SnapshotRegionManifest.Builder region) throws IOException {
-      // we should ensure the snapshot dir exist, maybe it has been deleted by master
-      // see HBASE-16464
-      if (fs.exists(snapshotDir)) {
-        SnapshotRegionManifest manifest = region.build();
-        FSDataOutputStream stream = fs.create(getRegionManifestPath(snapshotDir, manifest));
-        try {
-          manifest.writeTo(stream);
-        } finally {
-          stream.close();
+        private final Configuration conf;
+
+        private final Path snapshotDir;
+
+        private final FileSystem fs;
+
+        public ManifestBuilder(final Configuration conf, final FileSystem fs, final Path snapshotDir) {
+            this.snapshotDir = snapshotDir;
+            this.conf = conf;
+            this.fs = fs;
         }
-      } else {
-        LOG.warn("can't write manifest without parent dir, maybe it has been deleted by master?");
-      }
-    }
 
-    @Override
-    public SnapshotRegionManifest.FamilyFiles.Builder familyOpen(
-        final SnapshotRegionManifest.Builder region, final byte[] familyName) {
-      SnapshotRegionManifest.FamilyFiles.Builder family =
-          SnapshotRegionManifest.FamilyFiles.newBuilder();
-      family.setFamilyName(UnsafeByteOperations.unsafeWrap(familyName));
-      return family;
-    }
-
-    @Override
-    public void familyClose(final SnapshotRegionManifest.Builder region,
-        final SnapshotRegionManifest.FamilyFiles.Builder family) {
-      region.addFamilyFiles(family.build());
-    }
-
-    @Override
-    public void storeFile(final SnapshotRegionManifest.Builder region,
-        final SnapshotRegionManifest.FamilyFiles.Builder family, final StoreFileInfo storeFile)
-        throws IOException {
-      SnapshotRegionManifest.StoreFile.Builder sfManifest =
-            SnapshotRegionManifest.StoreFile.newBuilder();
-      sfManifest.setName(storeFile.getPath().getName());
-      if (storeFile.isReference()) {
-        sfManifest.setReference(storeFile.getReference().convert());
-      }
-      if (!storeFile.isReference() && !storeFile.isLink()) {
-        sfManifest.setFileSize(storeFile.getSize());
-      } else {
-        sfManifest.setFileSize(storeFile.getReferencedFileStatus(fs).getLen());
-      }
-      family.addStoreFiles(sfManifest.build());
-    }
-  }
-
-  static List<SnapshotRegionManifest> loadRegionManifests(final Configuration conf,
-      final Executor executor, final FileSystem fs, final Path snapshotDir,
-      final SnapshotDescription desc, final int manifestSizeLimit) throws IOException {
-    FileStatus[] manifestFiles = FSUtils.listStatus(fs, snapshotDir, new PathFilter() {
-      @Override
-      public boolean accept(Path path) {
-        return path.getName().startsWith(SNAPSHOT_MANIFEST_PREFIX);
-      }
-    });
-
-    if (manifestFiles == null || manifestFiles.length == 0) return null;
-
-    final ExecutorCompletionService<SnapshotRegionManifest> completionService =
-      new ExecutorCompletionService<>(executor);
-    for (final FileStatus st: manifestFiles) {
-      completionService.submit(new Callable<SnapshotRegionManifest>() {
         @Override
-        public SnapshotRegionManifest call() throws IOException {
-          FSDataInputStream stream = fs.open(st.getPath());
-          CodedInputStream cin = CodedInputStream.newInstance(stream);
-          cin.setSizeLimit(manifestSizeLimit);
-
-          try {
-            return SnapshotRegionManifest.parseFrom(cin);
-          } finally {
-            stream.close();
-          }
+        public SnapshotRegionManifest.Builder regionOpen(final RegionInfo regionInfo) {
+            SnapshotRegionManifest.Builder manifest = SnapshotRegionManifest.newBuilder();
+            manifest.setRegionInfo(ProtobufUtil.toRegionInfo(regionInfo));
+            return manifest;
         }
-      });
+
+        @Override
+        public void regionClose(final SnapshotRegionManifest.Builder region) throws IOException {
+            // we should ensure the snapshot dir exist, maybe it has been deleted by master
+            // see HBASE-16464
+            if (fs.exists(snapshotDir)) {
+                SnapshotRegionManifest manifest = region.build();
+                FSDataOutputStream stream = fs.create(getRegionManifestPath(snapshotDir, manifest));
+                try {
+                    manifest.writeTo(stream);
+                } finally {
+                    stream.close();
+                }
+            } else {
+                LOG.warn("can't write manifest without parent dir, maybe it has been deleted by master?");
+            }
+        }
+
+        @Override
+        public SnapshotRegionManifest.FamilyFiles.Builder familyOpen(final SnapshotRegionManifest.Builder region, final byte[] familyName) {
+            SnapshotRegionManifest.FamilyFiles.Builder family = SnapshotRegionManifest.FamilyFiles.newBuilder();
+            family.setFamilyName(UnsafeByteOperations.unsafeWrap(familyName));
+            return family;
+        }
+
+        @Override
+        public void familyClose(final SnapshotRegionManifest.Builder region, final SnapshotRegionManifest.FamilyFiles.Builder family) {
+            region.addFamilyFiles(family.build());
+        }
+
+        @Override
+        public void storeFile(final SnapshotRegionManifest.Builder region, final SnapshotRegionManifest.FamilyFiles.Builder family, final StoreFileInfo storeFile) throws IOException {
+            SnapshotRegionManifest.StoreFile.Builder sfManifest = SnapshotRegionManifest.StoreFile.newBuilder();
+            sfManifest.setName(storeFile.getPath().getName());
+            if (storeFile.isReference()) {
+                sfManifest.setReference(storeFile.getReference().convert());
+            }
+            if (!storeFile.isReference() && !storeFile.isLink()) {
+                sfManifest.setFileSize(storeFile.getSize());
+            } else {
+                sfManifest.setFileSize(storeFile.getReferencedFileStatus(fs).getLen());
+            }
+            family.addStoreFiles(sfManifest.build());
+        }
     }
 
-    ArrayList<SnapshotRegionManifest> regionsManifest = new ArrayList<>(manifestFiles.length);
-    try {
-      for (int i = 0; i < manifestFiles.length; ++i) {
-        regionsManifest.add(completionService.take().get());
-      }
-    } catch (InterruptedException e) {
-      throw new InterruptedIOException(e.getMessage());
-    } catch (ExecutionException e) {
-      Throwable t = e.getCause();
+    static List<SnapshotRegionManifest> loadRegionManifests(final Configuration conf, final Executor executor, final FileSystem fs, final Path snapshotDir, final SnapshotDescription desc, final int manifestSizeLimit) throws IOException {
+        FileStatus[] manifestFiles = FSUtils.listStatus(fs, snapshotDir, new PathFilter() {
 
-      if(t instanceof InvalidProtocolBufferException) {
-        throw (InvalidProtocolBufferException)t;
-      } else {
-        IOException ex = new IOException("ExecutionException");
-        ex.initCause(e.getCause());
-        throw ex;
-      }
+            @Override
+            public boolean accept(Path path) {
+                return path.getName().startsWith(SNAPSHOT_MANIFEST_PREFIX);
+            }
+        });
+        if (manifestFiles == null || manifestFiles.length == 0)
+            return null;
+        final ExecutorCompletionService<SnapshotRegionManifest> completionService = new ExecutorCompletionService<>(executor);
+        for (final FileStatus st : manifestFiles) {
+            completionService.submit(new Callable<SnapshotRegionManifest>() {
+
+                @Override
+                public SnapshotRegionManifest call() throws IOException {
+                    FSDataInputStream stream = fs.open(st.getPath());
+                    CodedInputStream cin = CodedInputStream.newInstance(stream);
+                    cin.setSizeLimit(manifestSizeLimit);
+                    try {
+                        return SnapshotRegionManifest.parseFrom(cin);
+                    } finally {
+                        stream.close();
+                    }
+                }
+            });
+        }
+        ArrayList<SnapshotRegionManifest> regionsManifest = new ArrayList<>(manifestFiles.length);
+        try {
+            for (int i = 0; i < manifestFiles.length; ++i) {
+                regionsManifest.add(completionService.take().get());
+            }
+        } catch (InterruptedException e) {
+            throw new InterruptedIOException(e.getMessage());
+        } catch (ExecutionException e) {
+            Throwable t = e.getCause();
+            if (t instanceof InvalidProtocolBufferException) {
+                throw (InvalidProtocolBufferException) t;
+            } else {
+                IOException ex = new IOException("ExecutionException");
+                ex.initCause(e.getCause());
+                throw ex;
+            }
+        }
+        return regionsManifest;
     }
-    return regionsManifest;
-  }
 
-  static void deleteRegionManifest(final FileSystem fs, final Path snapshotDir,
-      final SnapshotRegionManifest manifest) throws IOException {
-    fs.delete(getRegionManifestPath(snapshotDir, manifest), true);
-  }
+    static void deleteRegionManifest(final FileSystem fs, final Path snapshotDir, final SnapshotRegionManifest manifest) throws IOException {
+        fs.delete(getRegionManifestPath(snapshotDir, manifest), true);
+    }
 
-  private static Path getRegionManifestPath(final Path snapshotDir,
-      final SnapshotRegionManifest manifest) {
-    String regionName = SnapshotManifest.getRegionNameFromManifest(manifest);
-    return new Path(snapshotDir, SNAPSHOT_MANIFEST_PREFIX + regionName);
-  }
+    private static Path getRegionManifestPath(final Path snapshotDir, final SnapshotRegionManifest manifest) {
+        String regionName = SnapshotManifest.getRegionNameFromManifest(manifest);
+        return new Path(snapshotDir, SNAPSHOT_MANIFEST_PREFIX + regionName);
+    }
 }
