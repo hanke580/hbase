@@ -244,7 +244,7 @@ public class AccessControlUtil {
    * @return the converted TablePermission
    */
   public static TablePermission toTablePermission(AccessControlProtos.TablePermission proto) {
-    Permission.Action[] actions = toPermissionActions(proto.getActionList());
+    List<Permission.Action> actions = toPermissionActions(proto.getActionList());
     TableName table = null;
     byte[] qualifier = null;
     byte[] family = null;
@@ -367,15 +367,16 @@ public class AccessControlUtil {
   }
 
   /**
-   * Converts a list of Permission.Action proto to an array of client Permission.Action objects.
+   * Converts a list of Permission.Action proto to a list of client Permission.Action objects.
+   *
    * @param protoActions the list of protobuf Actions
-   * @return the converted array of Actions
+   * @return the converted list of Actions
    */
-  public static Permission.Action[]
-    toPermissionActions(List<AccessControlProtos.Permission.Action> protoActions) {
-    Permission.Action[] actions = new Permission.Action[protoActions.size()];
-    for (int i = 0; i < protoActions.size(); i++) {
-      actions[i] = toPermissionAction(protoActions.get(i));
+  public static List<Permission.Action> toPermissionActions(
+      List<AccessControlProtos.Permission.Action> protoActions) {
+    List<Permission.Action> actions = new ArrayList<>(protoActions.size());
+    for (AccessControlProtos.Permission.Action a : protoActions) {
+      actions.add(toPermissionAction(a));
     }
     return actions;
   }
