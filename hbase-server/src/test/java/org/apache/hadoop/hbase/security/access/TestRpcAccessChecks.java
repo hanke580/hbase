@@ -144,15 +144,10 @@ public class TestRpcAccessChecks {
       User.createUserForTesting(conf, "user_in_supergroup", new String[] { "supergroup" });
     USER_ADMIN_NOT_SUPER = User.createUserForTesting(conf, "normal_admin", new String[0]);
 
-    TEST_UTIL.startMiniCluster();
-    // Wait for the ACL table to become available
-    TEST_UTIL.waitUntilAllRegionsAssigned(PermissionStorage.ACL_TABLE_NAME);
-
-    // Assign permissions to groups
-    SecureTestUtil.grantGlobal(TEST_UTIL, toGroupEntry(GROUP_ADMIN), Permission.Action.ADMIN,
-      Permission.Action.CREATE);
-    SecureTestUtil.grantGlobal(TEST_UTIL, USER_ADMIN_NOT_SUPER.getShortName(),
-      Permission.Action.ADMIN);
+    // Assign permissions to users and groups
+    SecureTestUtil.grantGlobal(TEST_UTIL, USER_ADMIN.getShortName(), Permission.Action.ADMIN);
+    SecureTestUtil.grantGlobal(TEST_UTIL, toGroupEntry(GROUP_ADMIN), Permission.Action.ADMIN);
+    // No permissions to USER_NON_ADMIN
   }
 
   interface Action {

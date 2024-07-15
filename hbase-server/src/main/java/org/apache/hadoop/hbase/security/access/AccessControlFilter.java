@@ -34,9 +34,10 @@ import org.apache.yetus.audience.InterfaceAudience;
 /**
  * <strong>NOTE: for internal use only by AccessController implementation</strong>
  * <p>
- * TODO: There is room for further performance optimization here. Calling AuthManager.authorize()
- * per KeyValue imposes a fair amount of overhead. A more optimized solution might look at the
- * qualifiers where permissions are actually granted and explicitly limit the scan to those.
+ * TODO: There is room for further performance optimization here.
+ * Calling TableAuthManager.authorize() per KeyValue imposes a fair amount of
+ * overhead.  A more optimized solution might look at the qualifiers where
+ * permissions are actually granted and explicitly limit the scan to those.
  * </p>
  * <p>
  * We should aim to use this _only_ when access to the requested column families is not granted at
@@ -54,7 +55,7 @@ class AccessControlFilter extends FilterBase {
     CHECK_CELL_DEFAULT,
   };
 
-  private AuthManager authManager;
+  private TableAuthManager authManager;
   private TableName table;
   private User user;
   private boolean isSystemTable;
@@ -71,8 +72,8 @@ class AccessControlFilter extends FilterBase {
   AccessControlFilter() {
   }
 
-  AccessControlFilter(AuthManager mgr, User ugi, TableName tableName, Strategy strategy,
-    Map<ByteRange, Integer> cfVsMaxVersions) {
+  AccessControlFilter(TableAuthManager mgr, User ugi, TableName tableName,
+      Strategy strategy, Map<ByteRange, Integer> cfVsMaxVersions) {
     authManager = mgr;
     table = tableName;
     user = ugi;
@@ -116,22 +117,20 @@ class AccessControlFilter extends FilterBase {
       return ReturnCode.SKIP;
     }
     // XXX: Compare in place, don't clone
-    byte[] f = CellUtil.cloneFamily(cell);
-    byte[] q = CellUtil.cloneQualifier(cell);
+    byte[] family = CellUtil.cloneFamily(cell);
+    byte[] qualifier = CellUtil.cloneQualifier(cell);
     switch (strategy) {
       // Filter only by checking the table or CF permissions
       case CHECK_TABLE_AND_CF_ONLY: {
-        if (authManager.authorizeUserTable(user, table, f, q, Permission.Action.READ)) {
+        if (authManager.authorize(user, table, family, qualifier, Permission.Action.READ)) {
           return ReturnCode.INCLUDE;
         }
       }
         break;
       // Cell permissions can override table or CF permissions
       case CHECK_CELL_DEFAULT: {
-        if (
-          authManager.authorizeUserTable(user, table, f, q, Permission.Action.READ)
-            || authManager.authorizeCell(user, table, cell, Permission.Action.READ)
-        ) {
+        if (authManager.authorize(user, table, family, qualifier, Permission.Action.READ) ||
+            authManager.authorize(user, table, cell, Permission.Action.READ)) {
           return ReturnCode.INCLUDE;
         }
       }

@@ -211,9 +211,11 @@ public class TestNamespaceCommands extends SecureTestUtil {
     String userTestNamespace = "userTestNsp";
     Table acl = UTIL.getConnection().getTable(PermissionStorage.ACL_TABLE_NAME);
     try {
-      ListMultimap<String, UserPermission> perms =
-        PermissionStorage.getNamespacePermissions(conf, TEST_NAMESPACE);
-      for (Map.Entry<String, UserPermission> entry : perms.entries()) {
+      ListMultimap<String, TablePermission> perms =
+          AccessControlLists.getNamespacePermissions(conf, TEST_NAMESPACE);
+
+      perms = AccessControlLists.getNamespacePermissions(conf, TEST_NAMESPACE);
+      for (Map.Entry<String, TablePermission> entry : perms.entries()) {
         LOG.debug(Objects.toString(entry));
       }
       assertEquals(6, perms.size());
@@ -225,13 +227,15 @@ public class TestNamespaceCommands extends SecureTestUtil {
       assertTrue(result != null);
       perms = PermissionStorage.getNamespacePermissions(conf, TEST_NAMESPACE);
       assertEquals(7, perms.size());
-      List<UserPermission> namespacePerms = perms.get(userTestNamespace);
+      List<TablePermission> namespacePerms = perms.get(userTestNamespace);
       assertTrue(perms.containsKey(userTestNamespace));
       assertEquals(1, namespacePerms.size());
       assertEquals(TEST_NAMESPACE,
-        ((NamespacePermission) namespacePerms.get(0).getPermission()).getNamespace());
-      assertEquals(1, namespacePerms.get(0).getPermission().getActions().length);
-      assertEquals(Permission.Action.WRITE, namespacePerms.get(0).getPermission().getActions()[0]);
+        namespacePerms.get(0).getNamespace());
+      assertEquals(null, namespacePerms.get(0).getFamily());
+      assertEquals(null, namespacePerms.get(0).getQualifier());
+      assertEquals(1, namespacePerms.get(0).getActions().length);
+      assertEquals(Permission.Action.WRITE, namespacePerms.get(0).getActions()[0]);
 
       // Revoke and check state in ACL table
       revokeFromNamespace(UTIL, userTestNamespace, TEST_NAMESPACE, Permission.Action.WRITE);

@@ -280,6 +280,8 @@ public class TestAccessController extends SecureTestUtil {
   public static void tearDownAfterClass() throws Exception {
     cleanUp();
     TEST_UTIL.shutdownMiniCluster();
+    int total = TableAuthManager.getTotalRefCount();
+    assertTrue("Unexpected reference count: " + total, total == 0);
   }
 
   private static void setUpTableAndUserPermissions() throws Exception {
@@ -1704,15 +1706,24 @@ public class TestAccessController extends SecureTestUtil {
     htd.setOwner(USER_OWNER);
     createTable(TEST_UTIL, htd);
     try {
-      List<UserPermission> perms =
-        admin.getUserPermissions(GetUserPermissionsRequest.newBuilder(tableName).build());
-      UserPermission ownerperm = new UserPermission(USER_OWNER.getName(),
-        Permission.newBuilder(tableName).withActions(Action.values()).build());
+      List<UserPermission> perms;
+      Table acl = systemUserConnection.getTable(AccessControlLists.ACL_TABLE_NAME);
+      try {
+        BlockingRpcChannel service = acl.coprocessorService(tableName.getName());
+        AccessControlService.BlockingInterface protocol =
+            AccessControlService.newBlockingStub(service);
+        perms = AccessControlUtil.getUserPermissions(null, protocol, tableName);
+      } finally {
+        acl.close();
+      }
+
+      UserPermission ownerperm =
+          new UserPermission(Bytes.toBytes(USER_OWNER.getName()), tableName, null, Action.values());
       assertTrue("Owner should have all permissions on table",
         hasFoundUserPermission(ownerperm, perms));
 
       User user = User.createUserForTesting(TEST_UTIL.getConfiguration(), "user", new String[0]);
-      String userName = user.getShortName();
+      byte[] userName = Bytes.toBytes(user.getShortName());
 
       UserPermission up = new UserPermission(userName, Permission.newBuilder(tableName)
         .withFamily(family1).withQualifier(qualifier).withActions(Permission.Action.READ).build());
@@ -1760,9 +1771,18 @@ public class TestAccessController extends SecureTestUtil {
       htd.setOwner(newOwner);
       admin.modifyTable(tableName, htd);
 
-      perms = admin.getUserPermissions(GetUserPermissionsRequest.newBuilder(tableName).build());
-      UserPermission newOwnerperm = new UserPermission(newOwner.getName(),
-        Permission.newBuilder(tableName).withActions(Action.values()).build());
+      acl = systemUserConnection.getTable(AccessControlLists.ACL_TABLE_NAME);
+      try {
+        BlockingRpcChannel service = acl.coprocessorService(tableName.getName());
+        AccessControlService.BlockingInterface protocol =
+            AccessControlService.newBlockingStub(service);
+        perms = AccessControlUtil.getUserPermissions(null, protocol, tableName);
+      } finally {
+        acl.close();
+      }
+
+      UserPermission newOwnerperm =
+          new UserPermission(Bytes.toBytes(newOwner.getName()), tableName, null, Action.values());
       assertTrue("New owner should have all permissions on table",
         hasFoundUserPermission(newOwnerperm, perms));
     } finally {
@@ -1778,12 +1798,12 @@ public class TestAccessController extends SecureTestUtil {
 
     Collection<String> superUsers = Superusers.getSuperUsers();
     List<UserPermission> adminPerms = new ArrayList<>(superUsers.size() + 1);
-    adminPerms.add(new UserPermission(USER_ADMIN.getShortName(), Permission.newBuilder()
-      .withActions(Action.ADMIN, Action.CREATE, Action.READ, Action.WRITE).build()));
-    for (String user : superUsers) {
-      // Global permission
-      adminPerms.add(
-        new UserPermission(user, Permission.newBuilder().withActions(Action.values()).build()));
+    adminPerms.add(new UserPermission(Bytes.toBytes(USER_ADMIN.getShortName()),
+      AccessControlLists.ACL_TABLE_NAME, null, null, Bytes.toBytes("ACRW")));
+
+    for(String user: superUsers) {
+      adminPerms.add(new UserPermission(Bytes.toBytes(user), AccessControlLists.ACL_TABLE_NAME,
+          null, null, Action.values()));
     }
     assertTrue(
       "Only super users, global users and user admin has permission on table hbase:acl "
@@ -2449,7 +2469,7 @@ public class TestAccessController extends SecureTestUtil {
     verifyAllowed(getAction, testGrantRevoke);
     verifyDenied(putAction, testGrantRevoke);
 
-    // Grant global WRITE permissions to testGrantRevoke.
+    // Grant global READ permissions to testGrantRevoke.
     try {
       grantGlobalUsingAccessControlClient(TEST_UTIL, systemUserConnection, userName,
         Permission.Action.WRITE);
@@ -2785,11 +2805,8 @@ public class TestAccessController extends SecureTestUtil {
       assertTrue(namespacePermissions != null);
       assertEquals(expectedAmount, namespacePermissions.size());
       for (UserPermission namespacePermission : namespacePermissions) {
-        // Verify it is not a global user permission
-        assertFalse(namespacePermission.getAccessScope() == Permission.Scope.GLOBAL);
-        // Verify namespace is set
-        NamespacePermission nsPerm = (NamespacePermission) namespacePermission.getPermission();
-        assertEquals(expectedNamespace, nsPerm.getNamespace());
+        assertFalse(namespacePermission.isGlobal());  // Verify it is not a global user permission
+        assertEquals(expectedNamespace, namespacePermission.getNamespace());  // Verify namespace is set
       }
     } catch (Throwable thw) {
       throw new HBaseException(thw);
@@ -3155,8 +3172,8 @@ public class TestAccessController extends SecureTestUtil {
       Permission.Action[] expectedAction = { Action.READ };
       boolean userFound = false;
       for (UserPermission p : userPermissions) {
-        if (testUserPerms.getShortName().equals(p.getUser())) {
-          assertArrayEquals(expectedAction, p.getPermission().getActions());
+        if (testUserPerms.getShortName().equals(Bytes.toString(p.getUser()))) {
+          assertArrayEquals(expectedAction, p.getActions());
           userFound = true;
           break;
         }
@@ -3670,24 +3687,15 @@ public class TestAccessController extends SecureTestUtil {
     assertEquals(resultCount, userPermissions.size());
 
     for (UserPermission perm : userPermissions) {
-      if (perm.getPermission() instanceof TablePermission) {
-        TablePermission tablePerm = (TablePermission) perm.getPermission();
-        if (cf != null) {
-          assertTrue(Bytes.equals(cf, tablePerm.getFamily()));
-        }
-        if (cq != null) {
-          assertTrue(Bytes.equals(cq, tablePerm.getQualifier()));
-        }
-        if (userName != null && (superUsers == null || !superUsers.contains(perm.getUser()))) {
-          assertTrue(userName.equals(perm.getUser()));
-        }
-      } else if (
-        perm.getPermission() instanceof NamespacePermission
-          || perm.getPermission() instanceof GlobalPermission
-      ) {
-        if (userName != null && (superUsers == null || !superUsers.contains(perm.getUser()))) {
-          assertTrue(userName.equals(perm.getUser()));
-        }
+      if (cf != null) {
+        assertTrue(Bytes.equals(cf, perm.getFamily()));
+      }
+      if (cq != null) {
+        assertTrue(Bytes.equals(cq, perm.getQualifier()));
+      }
+      if (userName != null
+          && (superUsers == null || !superUsers.contains(Bytes.toString(perm.getUser())))) {
+        assertTrue(userName.equals(Bytes.toString(perm.getUser())));
       }
     }
   }

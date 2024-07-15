@@ -56,9 +56,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Performs checks for reference counting w.r.t. AuthManager which is used by AccessController.
- * NOTE: Only one test in here. In AMv2, there is problem deleting because we are missing auth. For
- * now disabled. See the cleanup method.
+ * Performs checks for reference counting w.r.t. TableAuthManager which is used by
+ * AccessController.
+ *
+ * NOTE: Only one test in  here. In AMv2, there is problem deleting because
+ * we are missing auth. For now disabled. See the cleanup method.
  */
 @Category({ SecurityTests.class, MediumTests.class })
 public class TestAccessController3 extends SecureTestUtil {

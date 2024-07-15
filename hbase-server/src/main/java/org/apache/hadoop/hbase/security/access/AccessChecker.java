@@ -58,8 +58,11 @@ import org.apache.hbase.thirdparty.com.google.common.collect.ImmutableSet;
 public class AccessChecker {
   private static final Logger LOG = LoggerFactory.getLogger(AccessChecker.class);
   private static final Logger AUDITLOG =
-    LoggerFactory.getLogger("SecurityLogger." + AccessChecker.class.getName());
-  private final AuthManager authManager;
+      LoggerFactory.getLogger("SecurityLogger." + AccessChecker.class.getName());
+  // TODO: we should move to a design where we don't even instantiate an AccessChecker if
+  // authorization is not enabled (like in RSRpcServices), instead of always instantiating one and
+  // calling requireXXX() only to do nothing (since authorizationEnabled will be false).
+  private TableAuthManager authManager;
 
   /** Group service to retrieve the user group information */
   private static Groups groupService;
@@ -72,12 +75,29 @@ public class AccessChecker {
    * Constructor with existing configuration
    * @param conf Existing configuration to use
    */
-  public AccessChecker(final Configuration conf) {
-    this.authManager = new AuthManager(conf);
+  public AccessChecker(final Configuration conf, final ZKWatcher zkw)
+      throws RuntimeException {
+    if (zkw != null) {
+      try {
+        this.authManager = TableAuthManager.getOrCreate(zkw, conf);
+      } catch (IOException ioe) {
+        throw new RuntimeException("Error obtaining AccessChecker", ioe);
+      }
+    } else {
+      throw new NullPointerException("Error obtaining AccessChecker, zk found null.");
+    }
+    authorizationEnabled = isAuthorizationSupported(conf);
     initGroupService(conf);
   }
 
-  public AuthManager getAuthManager() {
+  /**
+   * Releases {@link TableAuthManager}'s reference.
+   */
+  public void stop() {
+    TableAuthManager.release(authManager);
+  }
+
+  public TableAuthManager getAuthManager() {
     return authManager;
   }
 
@@ -95,9 +115,9 @@ public class AccessChecker {
     AuthResult result = null;
 
     for (Action permission : permissions) {
-      if (authManager.accessUserTable(user, tableName, permission)) {
-        result = AuthResult.allow(request, "Table permission granted", user, permission, tableName,
-          null, null);
+      if (authManager.hasAccess(user, tableName, permission)) {
+        result = AuthResult.allow(request, "Table permission granted",
+            user, permission, tableName, null, null);
         break;
       } else {
         // rest of the world
@@ -138,7 +158,7 @@ public class AccessChecker {
   public void requireGlobalPermission(User user, String request, Action perm, TableName tableName,
     Map<byte[], ? extends Collection<byte[]>> familyMap, String filterUser) throws IOException {
     AuthResult result;
-    if (authManager.authorizeUserGlobal(user, perm)) {
+    if (authManager.authorize(user, perm)) {
       result = AuthResult.allow(request, "Global check allowed", user, perm, tableName, familyMap);
     } else {
       result = AuthResult.deny(request, "Global check failed", user, perm, tableName, familyMap);
@@ -164,7 +184,7 @@ public class AccessChecker {
   public void requireGlobalPermission(User user, String request, Action perm, String namespace)
     throws IOException {
     AuthResult authResult;
-    if (authManager.authorizeUserGlobal(user, perm)) {
+    if (authManager.authorize(user, perm)) {
       authResult = AuthResult.allow(request, "Global check allowed", user, perm, null);
       authResult.getParams().setNamespace(namespace);
       logResult(authResult);
@@ -191,7 +211,7 @@ public class AccessChecker {
     AuthResult result = null;
 
     for (Action permission : permissions) {
-      if (authManager.authorizeUserNamespace(user, namespace, permission)) {
+      if (authManager.authorize(user, namespace, permission)) {
         result =
           AuthResult.allow(request, "Namespace permission granted", user, permission, namespace);
         break;
@@ -222,7 +242,7 @@ public class AccessChecker {
     AuthResult result = null;
 
     for (Action permission : permissions) {
-      if (authManager.authorizeUserNamespace(user, namespace, permission)) {
+      if (authManager.authorize(user, namespace, permission)) {
         result =
           AuthResult.allow(request, "Namespace permission granted", user, permission, namespace);
         result.getParams().setTableName(tableName).setFamilies(familyMap);
@@ -257,9 +277,9 @@ public class AccessChecker {
     AuthResult result = null;
 
     for (Action permission : permissions) {
-      if (authManager.authorizeUserTable(user, tableName, family, qualifier, permission)) {
-        result = AuthResult.allow(request, "Table permission granted", user, permission, tableName,
-          family, qualifier);
+      if (authManager.authorize(user, tableName, family, qualifier, permission)) {
+        result = AuthResult.allow(request, "Table permission granted",
+            user, permission, tableName, family, qualifier);
         break;
       } else {
         // rest of the world
@@ -290,9 +310,9 @@ public class AccessChecker {
     AuthResult result = null;
 
     for (Action permission : permissions) {
-      if (authManager.authorizeUserTable(user, tableName, permission)) {
-        result = AuthResult.allow(request, "Table permission granted", user, permission, tableName,
-          null, null);
+      if (authManager.authorize(user, tableName, null, null, permission)) {
+        result = AuthResult.allow(request, "Table permission granted",
+            user, permission, tableName, null, null);
         result.getParams().setFamily(family).setQualifier(qualifier);
         break;
       } else {

@@ -43,25 +43,27 @@ import org.slf4j.LoggerFactory;
 import org.apache.hbase.thirdparty.com.google.common.util.concurrent.ThreadFactoryBuilder;
 
 /**
- * Handles synchronization of access control list entries and updates throughout all nodes in the
- * cluster. The {@link AccessController} instance on the {@code _acl_} table regions, creates a
- * znode for each table as {@code /hbase/acl/tablename}, with the znode data containing a serialized
- * list of the permissions granted for the table. The {@code AccessController} instances on all
- * other cluster hosts watch the znodes for updates, which trigger updates in the
- * {@link AuthManager} permission cache.
+ * Handles synchronization of access control list entries and updates
+ * throughout all nodes in the cluster.  The {@link AccessController} instance
+ * on the {@code _acl_} table regions, creates a znode for each table as
+ * {@code /hbase/acl/tablename}, with the znode data containing a serialized
+ * list of the permissions granted for the table.  The {@code AccessController}
+ * instances on all other cluster hosts watch the znodes for updates, which
+ * trigger updates in the {@link TableAuthManager} permission cache.
  */
 @InterfaceAudience.Private
 public class ZKPermissionWatcher extends ZKListener implements Closeable {
   private static final Logger LOG = LoggerFactory.getLogger(ZKPermissionWatcher.class);
   // parent node for permissions lists
   static final String ACL_NODE = "acl";
-  private final AuthManager authManager;
+  private final TableAuthManager authManager;
   private final String aclZNode;
   private final CountDownLatch initialized = new CountDownLatch(1);
   private final ExecutorService executor;
   private Future<?> childrenChangedFuture;
 
-  public ZKPermissionWatcher(ZKWatcher watcher, AuthManager authManager, Configuration conf) {
+  public ZKPermissionWatcher(ZKWatcher watcher,
+      TableAuthManager authManager, Configuration conf) {
     super(watcher);
     this.authManager = authManager;
     String aclZnodeParent = conf.get("zookeeper.znode.acl.parent", ACL_NODE);

@@ -22,8 +22,6 @@ import java.io.DataOutput;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.EnumSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import org.apache.hadoop.hbase.TableName;
@@ -33,7 +31,7 @@ import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import org.apache.hbase.thirdparty.com.google.common.collect.ImmutableMap;
+import org.apache.hbase.thirdparty.com.google.common.collect.Maps;
 
 /**
  * Base permissions instance representing the ability to perform a given set of actions.
@@ -54,25 +52,7 @@ public class Permission extends VersionedWritable {
     private final byte code;
 
     Action(char code) {
-      this.code = (byte) code;
-    }
-
-    public byte code() {
-      return code;
-    }
-  }
-
-  @InterfaceAudience.Private
-  protected enum Scope {
-    GLOBAL('G'),
-    NAMESPACE('N'),
-    TABLE('T'),
-    EMPTY('E');
-
-    private final byte code;
-
-    Scope(char code) {
-      this.code = (byte) code;
+      this.code = (byte)code;
     }
 
     public byte code() {
@@ -81,20 +61,14 @@ public class Permission extends VersionedWritable {
   }
 
   private static final Logger LOG = LoggerFactory.getLogger(Permission.class);
+  protected static final Map<Byte,Action> ACTION_BY_CODE = Maps.newHashMap();
 
-  protected static final Map<Byte, Action> ACTION_BY_CODE;
-  protected static final Map<Byte, Scope> SCOPE_BY_CODE;
-
-  protected EnumSet<Action> actions = EnumSet.noneOf(Action.class);
-  protected Scope scope = Scope.EMPTY;
+  protected Action[] actions;
 
   static {
-    ACTION_BY_CODE = ImmutableMap.of(Action.READ.code, Action.READ, Action.WRITE.code, Action.WRITE,
-      Action.EXEC.code, Action.EXEC, Action.CREATE.code, Action.CREATE, Action.ADMIN.code,
-      Action.ADMIN);
-
-    SCOPE_BY_CODE = ImmutableMap.of(Scope.GLOBAL.code, Scope.GLOBAL, Scope.NAMESPACE.code,
-      Scope.NAMESPACE, Scope.TABLE.code, Scope.TABLE, Scope.EMPTY.code, Scope.EMPTY);
+    for (Action a : Action.values()) {
+      ACTION_BY_CODE.put(a.code(), a);
+    }
   }
 
   /** Empty constructor for Writable implementation. <b>Do not use.</b> */
@@ -104,54 +78,48 @@ public class Permission extends VersionedWritable {
 
   public Permission(Action... assigned) {
     if (assigned != null && assigned.length > 0) {
-      actions.addAll(Arrays.asList(assigned));
+      actions = Arrays.copyOf(assigned, assigned.length);
     }
   }
 
   public Permission(byte[] actionCodes) {
     if (actionCodes != null) {
-      for (byte code : actionCodes) {
-        Action action = ACTION_BY_CODE.get(code);
-        if (action == null) {
-          LOG.error(
-            "Ignoring unknown action code '" + Bytes.toStringBinary(new byte[] { code }) + "'");
+      Action acts[] = new Action[actionCodes.length];
+      int j = 0;
+      for (int i=0; i<actionCodes.length; i++) {
+        byte b = actionCodes[i];
+        Action a = ACTION_BY_CODE.get(b);
+        if (a == null) {
+          LOG.error("Ignoring unknown action code '"+
+              Bytes.toStringBinary(new byte[]{b})+"'");
           continue;
         }
-        actions.add(action);
+        acts[j++] = a;
       }
+      this.actions = Arrays.copyOf(acts, j);
     }
   }
 
   public Action[] getActions() {
-    return actions.toArray(new Action[actions.size()]);
+    return actions;
   }
 
-  /**
-   * check if given action is granted
-   * @param action action to be checked
-   * @return true if granted, false otherwise
-   */
   public boolean implies(Action action) {
-    return actions.contains(action);
+    if (this.actions != null) {
+      for (Action a : this.actions) {
+        if (a == action) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   public void setActions(Action[] assigned) {
     if (assigned != null && assigned.length > 0) {
-      // setActions should cover the previous actions,
-      // so we call clear here.
-      actions.clear();
-      actions.addAll(Arrays.asList(assigned));
+      actions = Arrays.copyOf(assigned, assigned.length);
     }
-  }
-
-  /**
-   * Check if two permission equals regardless of actions. It is useful when merging a new
-   * permission with an existed permission which needs to check two permissions's fields.
-   * @param obj instance
-   * @return true if equals, false otherwise
-   */
-  public boolean equalsExceptActions(Object obj) {
-    return obj instanceof Permission;
   }
 
   @Override
@@ -159,16 +127,26 @@ public class Permission extends VersionedWritable {
     if (!(obj instanceof Permission)) {
       return false;
     }
-
-    Permission other = (Permission) obj;
-    if (actions.isEmpty() && other.actions.isEmpty()) {
+    Permission other = (Permission)obj;
+    // check actions
+    if (actions == null && other.getActions() == null) {
       return true;
-    } else if (!actions.isEmpty() && !other.actions.isEmpty()) {
-      if (actions.size() != other.actions.size()) {
+    } else if (actions != null && other.getActions() != null) {
+      Action[] otherActions = other.getActions();
+      if (actions.length != otherActions.length) {
         return false;
       }
-      return actions.containsAll(other.actions);
+
+      outer:
+      for (Action a : actions) {
+        for (Action oa : otherActions) {
+          if (a == oa) continue outer;
+        }
+        return false;
+      }
+      return true;
     }
+
     return false;
   }
 
@@ -179,28 +157,26 @@ public class Permission extends VersionedWritable {
     for (Action a : actions) {
       result = prime * result + a.code();
     }
-    result = prime * result + scope.code();
     return result;
   }
 
   @Override
   public String toString() {
-    return "[Permission: " + rawExpression() + "]";
-  }
-
-  protected String rawExpression() {
-    StringBuilder raw = new StringBuilder("actions=");
+    StringBuilder str = new StringBuilder("[Permission: ")
+        .append("actions=");
     if (actions != null) {
-      int i = 0;
-      for (Action action : actions) {
-        if (i > 0) {
-          raw.append(",");
-        }
-        raw.append(action != null ? action.toString() : "NULL");
-        i++;
+      for (int i=0; i<actions.length; i++) {
+        if (i > 0)
+          str.append(",");
+        if (actions[i] != null)
+          str.append(actions[i].toString());
+        else
+          str.append("NULL");
       }
     }
-    return raw.toString();
+    str.append("]");
+
+    return str.toString();
   }
 
   /** Returns the object version number */
@@ -212,36 +188,32 @@ public class Permission extends VersionedWritable {
   @Override
   public void readFields(DataInput in) throws IOException {
     super.readFields(in);
-    int length = (int) in.readByte();
-    actions = EnumSet.noneOf(Action.class);
+    int length = (int)in.readByte();
     if (length > 0) {
+      actions = new Action[length];
       for (int i = 0; i < length; i++) {
         byte b = in.readByte();
-        Action action = ACTION_BY_CODE.get(b);
-        if (action == null) {
-          throw new IOException(
-            "Unknown action code '" + Bytes.toStringBinary(new byte[] { b }) + "' in input");
+        Action a = ACTION_BY_CODE.get(b);
+        if (a == null) {
+          throw new IOException("Unknown action code '"+
+              Bytes.toStringBinary(new byte[]{b})+"' in input");
         }
-        actions.add(action);
+        this.actions[i] = a;
       }
+    } else {
+      actions = new Action[0];
     }
-    scope = SCOPE_BY_CODE.get(in.readByte());
   }
 
   @Override
   public void write(DataOutput out) throws IOException {
     super.write(out);
-    out.writeByte(actions != null ? actions.size() : 0);
+    out.writeByte(actions != null ? actions.length : 0);
     if (actions != null) {
       for (Action a : actions) {
         out.writeByte(a.code());
       }
     }
-    out.writeByte(scope.code());
-  }
-
-  public Scope getAccessScope() {
-    return scope;
   }
 
   /**

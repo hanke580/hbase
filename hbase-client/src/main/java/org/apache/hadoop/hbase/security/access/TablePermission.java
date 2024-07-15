@@ -27,9 +27,10 @@ import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.yetus.audience.InterfaceAudience;
 
 /**
- * Represents an authorization for access for the given actions, optionally restricted to the given
- * column family or column qualifier, over the given table. If the family property is
- * <code>null</code>, it implies full table access.
+ * Represents an authorization for access for the given actions, optionally
+ * restricted to the given column family or column qualifier, over the
+ * given table.  If the family property is <code>null</code>, it implies
+ * full table access.
  */
 @InterfaceAudience.Public
 public class TablePermission extends Permission {
@@ -38,19 +39,114 @@ public class TablePermission extends Permission {
   private byte[] family;
   private byte[] qualifier;
 
+  //TODO refactor this class
+  //we need to refacting this into three classes (Global, Table, Namespace)
+  private String namespace;
+
+  /** Nullary constructor for Writable, do not use */
+  public TablePermission() {
+    super();
+  }
+
   /**
-   * Construct a table:family:qualifier permission.
-   * @param table     table name
-   * @param family    family name
-   * @param qualifier qualifier name
-   * @param assigned  assigned actions
+   * Create a new permission for the given table and (optionally) column family,
+   * allowing the given actions.
+   * @param table the table
+   * @param family the family, can be null if a global permission on the table
+   * @param assigned the list of allowed actions
    */
-  TablePermission(TableName table, byte[] family, byte[] qualifier, Action... assigned) {
+  public TablePermission(TableName table, byte[] family, Action... assigned) {
+    this(table, family, null, assigned);
+  }
+
+  /**
+   * Creates a new permission for the given table, restricted to the given
+   * column family and qualifier, allowing the assigned actions to be performed.
+   * @param table the table
+   * @param family the family, can be null if a global permission on the table
+   * @param assigned the list of allowed actions
+   */
+  public TablePermission(TableName table, byte[] family, byte[] qualifier,
+      Action... assigned) {
     super(assigned);
     this.table = table;
     this.family = family;
     this.qualifier = qualifier;
-    this.scope = Scope.TABLE;
+  }
+
+  /**
+   * Creates a new permission for the given table, family and column qualifier,
+   * allowing the actions matching the provided byte codes to be performed.
+   * @param table the table
+   * @param family the family, can be null if a global permission on the table
+   * @param actionCodes the list of allowed action codes
+   */
+  public TablePermission(TableName table, byte[] family, byte[] qualifier,
+      byte[] actionCodes) {
+    super(actionCodes);
+    this.table = table;
+    this.family = family;
+    this.qualifier = qualifier;
+  }
+
+  /**
+   * Creates a new permission for the given namespace or table, restricted to the given
+   * column family and qualifier, allowing the assigned actions to be performed.
+   * @param namespace
+   * @param table the table
+   * @param family the family, can be null if a global permission on the table
+   * @param assigned the list of allowed actions
+   */
+  public TablePermission(String namespace, TableName table, byte[] family, byte[] qualifier,
+      Action... assigned) {
+    super(assigned);
+    this.namespace = namespace;
+    this.table = table;
+    this.family = family;
+    this.qualifier = qualifier;
+  }
+
+  /**
+   * Creates a new permission for the given namespace or table, family and column qualifier,
+   * allowing the actions matching the provided byte codes to be performed.
+   * @param namespace
+   * @param table the table
+   * @param family the family, can be null if a global permission on the table
+   * @param actionCodes the list of allowed action codes
+   */
+  public TablePermission(String namespace, TableName table, byte[] family, byte[] qualifier,
+      byte[] actionCodes) {
+    super(actionCodes);
+    this.namespace = namespace;
+    this.table = table;
+    this.family = family;
+    this.qualifier = qualifier;
+  }
+
+  /**
+   * Creates a new permission for the given namespace,
+   * allowing the actions matching the provided byte codes to be performed.
+   * @param namespace
+   * @param actionCodes the list of allowed action codes
+   */
+  public TablePermission(String namespace, byte[] actionCodes) {
+    super(actionCodes);
+    this.namespace = namespace;
+  }
+
+  /**
+   * Create a new permission for the given namespace,
+   * allowing the given actions.
+   * @param namespace
+   * @param assigned the list of allowed actions
+   */
+  public TablePermission(String namespace, Action... assigned) {
+    super(assigned);
+    this.namespace = namespace;
+  }
+
+  public boolean hasTable() {
+    return table != null;
   }
 
   public TableName getTableName() {
@@ -73,58 +169,65 @@ public class TablePermission extends Permission {
     return qualifier;
   }
 
+  public boolean hasNamespace() {
+    return namespace != null;
+  }
+
   public String getNamespace() {
-    return table.getNamespaceAsString();
+    return namespace;
   }
 
   /**
-   * Check if given action can performs on given table:family:qualifier.
-   * @param table     table name
-   * @param family    family name
-   * @param qualifier qualifier name
-   * @param action    one of [Read, Write, Create, Exec, Admin]
-   * @return true if can, false otherwise
+   * Checks that a given table operation is authorized by this permission
+   * instance.
+   *
+   * @param namespace the namespace where the operation is being performed
+   * @param action the action being requested
+   * @return <code>true</code> if the action within the given scope is allowed
+   *   by this permission, <code>false</code>
    */
-  public boolean implies(TableName table, byte[] family, byte[] qualifier, Action action) {
-    if (failCheckTable(table)) {
+  public boolean implies(String namespace, Action action) {
+    if (this.namespace == null || !this.namespace.equals(namespace)) {
       return false;
     }
-    if (failCheckFamily(family)) {
-      return false;
-    }
-    if (failCheckQualifier(qualifier)) {
-      return false;
-    }
-    return implies(action);
+
+    // check actions
+    return super.implies(action);
   }
 
   /**
-   * Check if given action can performs on given table:family.
-   * @param table  table name
-   * @param family family name
-   * @param action one of [Read, Write, Create, Exec, Admin]
-   * @return true if can, false otherwise
+   * Checks that a given table operation is authorized by this permission
+   * instance.
+   *
+   * @param table the table where the operation is being performed
+   * @param family the column family to which the operation is restricted,
+   *   if <code>null</code> implies "all"
+   * @param qualifier the column qualifier to which the action is restricted,
+   *   if <code>null</code> implies "all"
+   * @param action the action being requested
+   * @return <code>true</code> if the action within the given scope is allowed
+   *   by this permission, <code>false</code>
    */
-  public boolean implies(TableName table, byte[] family, Action action) {
-    if (failCheckTable(table)) {
+  public boolean implies(TableName table, byte[] family, byte[] qualifier,
+      Action action) {
+    if (this.table == null || !this.table.equals(table)) {
       return false;
     }
-    if (failCheckFamily(family)) {
+
+    if (this.family != null &&
+        (family == null ||
+         !Bytes.equals(this.family, family))) {
       return false;
     }
-    return implies(action);
-  }
 
-  private boolean failCheckTable(TableName table) {
-    return this.table == null || !this.table.equals(table);
-  }
+    if (this.qualifier != null &&
+        (qualifier == null ||
+         !Bytes.equals(this.qualifier, qualifier))) {
+      return false;
+    }
 
-  private boolean failCheckFamily(byte[] family) {
-    return this.family != null && (family == null || !Bytes.equals(this.family, family));
-  }
-
-  private boolean failCheckQualifier(byte[] qual) {
-    return this.qualifier != null && (qual == null || !Bytes.equals(this.qualifier, qual));
+    // check actions
+    return super.implies(action);
   }
 
   /**
@@ -137,7 +240,7 @@ public class TablePermission extends Permission {
    *         otherwise <code>false</code>
    */
   public boolean implies(TableName table, KeyValue kv, Action action) {
-    if (failCheckTable(table)) {
+    if (this.table == null || !this.table.equals(table)) {
       return false;
     }
 
@@ -154,34 +257,82 @@ public class TablePermission extends Permission {
   }
 
   /**
-   * Check if fields of table in table permission equals.
-   * @param tp to be checked table permission
-   * @return true if equals, false otherwise
+   * Returns <code>true</code> if this permission matches the given column
+   * family at least.  This only indicates a partial match against the table
+   * and column family, however, and does not guarantee that implies() for the
+   * column same family would return <code>true</code>.  In the case of a
+   * column-qualifier specific permission, for example, implies() would still
+   * return false.
    */
-  public boolean tableFieldsEqual(TablePermission tp) {
-    if (tp == null) {
+  public boolean matchesFamily(TableName table, byte[] family, Action action) {
+    if (this.table == null || !this.table.equals(table)) {
       return false;
     }
 
-    boolean tEq = (table == null && tp.table == null) || (table != null && table.equals(tp.table));
-    boolean fEq = (family == null && tp.family == null) || Bytes.equals(family, tp.family);
-    boolean qEq =
-      (qualifier == null && tp.qualifier == null) || Bytes.equals(qualifier, tp.qualifier);
-    return tEq && fEq && qEq;
+    if (this.family != null &&
+        (family == null ||
+         !Bytes.equals(this.family, family))) {
+      return false;
+    }
+
+    // ignore qualifier
+    // check actions
+    return super.implies(action);
+  }
+
+  /**
+   * Returns if the given permission matches the given qualifier.
+   * @param table the table name to match
+   * @param family the column family to match
+   * @param qualifier the qualifier name to match
+   * @param action the action requested
+   * @return <code>true</code> if the table, family and qualifier match,
+   *   otherwise <code>false</code>
+   */
+  public boolean matchesFamilyQualifier(TableName table, byte[] family, byte[] qualifier,
+                                Action action) {
+    if (!matchesFamily(table, family, action)) {
+      return false;
+    } else {
+      if (this.qualifier != null &&
+          (qualifier == null ||
+           !Bytes.equals(this.qualifier, qualifier))) {
+        return false;
+      }
+    }
+    return super.implies(action);
+  }
+
+  public boolean tableFieldsEqual(TablePermission other){
+    if (!(((table == null && other.getTableName() == null) ||
+           (table != null && table.equals(other.getTableName()))) &&
+         ((family == null && other.getFamily() == null) ||
+           Bytes.equals(family, other.getFamily())) &&
+         ((qualifier == null && other.getQualifier() == null) ||
+          Bytes.equals(qualifier, other.getQualifier())) &&
+         ((namespace == null && other.getNamespace() == null) ||
+          (namespace != null && namespace.equals(other.getNamespace())))
+    )) {
+      return false;
+    }
+    return true;
   }
 
   @Override
-  public boolean equalsExceptActions(Object obj) {
+  @edu.umd.cs.findbugs.annotations.SuppressWarnings(value="NP_NULL_ON_SOME_PATH",
+    justification="Passed on construction except on constructor not to be used")
+  public boolean equals(Object obj) {
     if (!(obj instanceof TablePermission)) {
       return false;
     }
-    TablePermission other = (TablePermission) obj;
-    return tableFieldsEqual(other);
-  }
+    TablePermission other = (TablePermission)obj;
 
-  @Override
-  public boolean equals(Object obj) {
-    return equalsExceptActions(obj) && super.equals(obj);
+    if(!this.tableFieldsEqual(other)){
+      return false;
+    }
+
+    // check actions
+    return super.equals(other);
   }
 
   @Override
@@ -197,23 +348,41 @@ public class TablePermission extends Permission {
     if (qualifier != null) {
       result = prime * result + Bytes.hashCode(qualifier);
     }
+    if (namespace != null) {
+      result = prime * result + namespace.hashCode();
+    }
     return result;
   }
 
   @Override
   public String toString() {
-    return "[TablePermission: " + rawExpression() + "]";
-  }
-
-  @Override
-  protected String rawExpression() {
-    StringBuilder raw = new StringBuilder();
-    if (table != null) {
-      raw.append("table=").append(table).append(", family=")
-        .append(family == null ? null : Bytes.toString(family)).append(", qualifier=")
-        .append(qualifier == null ? null : Bytes.toString(qualifier)).append(", ");
+    StringBuilder str = new StringBuilder("[TablePermission: ");
+    if(namespace != null) {
+      str.append("namespace=").append(namespace)
+         .append(", ");
     }
-    return raw.toString() + super.rawExpression();
+    if(table != null) {
+       str.append("table=").append(table)
+          .append(", family=")
+          .append(family == null ? null : Bytes.toString(family))
+          .append(", qualifier=")
+          .append(qualifier == null ? null : Bytes.toString(qualifier))
+          .append(", ");
+    }
+    if (actions != null) {
+      str.append("actions=");
+      for (int i=0; i<actions.length; i++) {
+        if (i > 0)
+          str.append(",");
+        if (actions[i] != null)
+          str.append(actions[i].toString());
+        else
+          str.append("NULL");
+      }
+    }
+    str.append("]");
+
+    return str.toString();
   }
 
   @Override
@@ -229,13 +398,16 @@ public class TablePermission extends Permission {
     if (in.readBoolean()) {
       qualifier = Bytes.readByteArray(in);
     }
+    if(in.readBoolean()) {
+      namespace = Bytes.toString(Bytes.readByteArray(in));
+    }
   }
 
   @Override
   public void write(DataOutput out) throws IOException {
     super.write(out);
     // Explicitly writing null to maintain se/deserialize backward compatibility.
-    Bytes.writeByteArray(out, table == null ? null : table.getName());
+    Bytes.writeByteArray(out, (table == null) ? null : table.getName());
     out.writeBoolean(family != null);
     if (family != null) {
       Bytes.writeByteArray(out, family);
@@ -243,6 +415,10 @@ public class TablePermission extends Permission {
     out.writeBoolean(qualifier != null);
     if (qualifier != null) {
       Bytes.writeByteArray(out, qualifier);
+    }
+    out.writeBoolean(namespace != null);
+    if(namespace != null) {
+      Bytes.writeByteArray(out, Bytes.toBytes(namespace));
     }
   }
 }
