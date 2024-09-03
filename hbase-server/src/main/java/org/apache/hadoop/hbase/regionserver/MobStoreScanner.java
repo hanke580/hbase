@@ -36,80 +36,83 @@ import org.slf4j.LoggerFactory;
 @InterfaceAudience.Private
 public class MobStoreScanner extends StoreScanner {
 
-  private static final Logger LOG = LoggerFactory.getLogger(MobStoreScanner.class);
+    private static final Logger LOG = LoggerFactory.getLogger(MobStoreScanner.class);
 
-  private boolean cacheMobBlocks = false;
-  private boolean rawMobScan = false;
-  private boolean readEmptyValueOnMobCellMiss = false;
-  private final HMobStore mobStore;
-  private final List<MobCell> referencedMobCells;
+    private boolean cacheMobBlocks = false;
 
-  public MobStoreScanner(HStore store, ScanInfo scanInfo, Scan scan,
-    final NavigableSet<byte[]> columns, long readPt) throws IOException {
-    super(store, scanInfo, scan, columns, readPt);
-    cacheMobBlocks = MobUtils.isCacheMobBlocks(scan);
-    rawMobScan = MobUtils.isRawMobScan(scan);
-    readEmptyValueOnMobCellMiss = MobUtils.isReadEmptyValueOnMobCellMiss(scan);
-    if (!(store instanceof HMobStore)) {
-      throw new IllegalArgumentException("The store " + store + " is not a HMobStore");
-    }
-    mobStore = (HMobStore) store;
-    this.referencedMobCells = new ArrayList<>();
-  }
+    private boolean rawMobScan = false;
 
-  /**
-   * Firstly reads the cells from the HBase. If the cell are a reference cell (which has the
-   * reference tag), the scanner need seek this cell from the mob file, and use the cell found from
-   * the mob file as the result.
-   */
-  @Override
-  public boolean next(List<Cell> outResult, ScannerContext ctx) throws IOException {
-    boolean result = super.next(outResult, ctx);
-    if (!rawMobScan) {
-      // retrieve the mob data
-      if (outResult.isEmpty()) {
-        return result;
-      }
-      long mobKVCount = 0;
-      long mobKVSize = 0;
-      for (int i = 0; i < outResult.size(); i++) {
-        Cell cell = outResult.get(i);
-        if (MobUtils.isMobReferenceCell(cell)) {
-          MobCell mobCell =
-            mobStore.resolve(cell, cacheMobBlocks, readPt, readEmptyValueOnMobCellMiss);
-          mobKVCount++;
-          mobKVSize += mobCell.getCell().getValueLength();
-          outResult.set(i, mobCell.getCell());
-          // Keep the MobCell here unless we shipped the RPC or close the scanner.
-          referencedMobCells.add(mobCell);
+    private boolean readEmptyValueOnMobCellMiss = false;
+
+    private final HMobStore mobStore;
+
+    private final List<MobCell> referencedMobCells;
+
+    public MobStoreScanner(HStore store, ScanInfo scanInfo, Scan scan, final NavigableSet<byte[]> columns, long readPt) throws IOException {
+        super(store, scanInfo, scan, columns, readPt);
+        cacheMobBlocks = MobUtils.isCacheMobBlocks(scan);
+        rawMobScan = MobUtils.isRawMobScan(scan);
+        readEmptyValueOnMobCellMiss = MobUtils.isReadEmptyValueOnMobCellMiss(scan);
+        if (!(store instanceof HMobStore)) {
+            throw new IllegalArgumentException("The store " + store + " is not a HMobStore");
         }
-      }
-      mobStore.updateMobScanCellsCount(mobKVCount);
-      mobStore.updateMobScanCellsSize(mobKVSize);
+        mobStore = (HMobStore) store;
+        this.referencedMobCells = new ArrayList<>();
     }
-    return result;
-  }
 
-  private void freeAllReferencedMobCells() throws IOException {
-    for (MobCell cell : referencedMobCells) {
-      cell.close();
+    /**
+     * Firstly reads the cells from the HBase. If the cell are a reference cell (which has the
+     * reference tag), the scanner need seek this cell from the mob file, and use the cell found from
+     * the mob file as the result.
+     */
+    @Override
+    public boolean next(List<Cell> outResult, ScannerContext ctx) throws IOException {
+        boolean result = super.next(outResult, ctx);
+        if (!rawMobScan) {
+            // retrieve the mob data
+            if (outResult.isEmpty()) {
+                return result;
+            }
+            long mobKVCount = 0;
+            long mobKVSize = 0;
+            for (int i = 0; i < outResult.size(); i++) {
+                Cell cell = outResult.get(i);
+                if (MobUtils.isMobReferenceCell(cell)) {
+                    MobCell mobCell = mobStore.resolve(cell, cacheMobBlocks, readPt, readEmptyValueOnMobCellMiss);
+                    mobKVCount++;
+                    mobKVSize += mobCell.getCell().getValueLength();
+                    outResult.set(i, mobCell.getCell());
+                    org.zlab.ocov.tracker.Runtime.update(outResult, 43, outResult, ctx);
+                    // Keep the MobCell here unless we shipped the RPC or close the scanner.
+                    referencedMobCells.add(mobCell);
+                }
+            }
+            mobStore.updateMobScanCellsCount(mobKVCount);
+            mobStore.updateMobScanCellsSize(mobKVSize);
+        }
+        return result;
     }
-    referencedMobCells.clear();
-  }
 
-  @Override
-  public void shipped() throws IOException {
-    super.shipped();
-    this.freeAllReferencedMobCells();
-  }
-
-  @Override
-  public void close() {
-    super.close();
-    try {
-      this.freeAllReferencedMobCells();
-    } catch (IOException e) {
-      LOG.warn("Failed to free referenced mob cells: ", e);
+    private void freeAllReferencedMobCells() throws IOException {
+        for (MobCell cell : referencedMobCells) {
+            cell.close();
+        }
+        referencedMobCells.clear();
     }
-  }
+
+    @Override
+    public void shipped() throws IOException {
+        super.shipped();
+        this.freeAllReferencedMobCells();
+    }
+
+    @Override
+    public void close() {
+        super.close();
+        try {
+            this.freeAllReferencedMobCells();
+        } catch (IOException e) {
+            LOG.warn("Failed to free referenced mob cells: ", e);
+        }
+    }
 }

@@ -34,7 +34,6 @@ import org.apache.hadoop.hbase.util.Threads;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hbase.thirdparty.com.google.common.collect.Lists;
 import org.apache.hbase.thirdparty.com.google.common.util.concurrent.ThreadFactoryBuilder;
 
@@ -44,216 +43,224 @@ import org.apache.hbase.thirdparty.com.google.common.util.concurrent.ThreadFacto
  */
 @InterfaceAudience.Private
 public abstract class OutputSink {
-  private static final Logger LOG = LoggerFactory.getLogger(OutputSink.class);
 
-  private final WALSplitter.PipelineController controller;
-  protected final EntryBuffers entryBuffers;
+    private static final Logger LOG = LoggerFactory.getLogger(OutputSink.class);
 
-  private final List<WriterThread> writerThreads = Lists.newArrayList();
+    private final WALSplitter.PipelineController controller;
 
-  protected final int numThreads;
+    protected final EntryBuffers entryBuffers;
 
-  protected CancelableProgressable reporter = null;
+    private final List<WriterThread> writerThreads = Lists.newArrayList();
 
-  protected final AtomicLong totalSkippedEdits = new AtomicLong();
+    protected final int numThreads;
 
-  /**
-   * List of all the files produced by this sink
-   */
-  protected final List<Path> splits = new ArrayList<>();
+    protected CancelableProgressable reporter = null;
 
-  protected MonitoredTask status = null;
+    protected final AtomicLong totalSkippedEdits = new AtomicLong();
 
-  /**
-   * Used when close this output sink.
-   */
-  protected final ThreadPoolExecutor closeThreadPool;
-  protected final CompletionService<Void> closeCompletionService;
+    /**
+     * List of all the files produced by this sink
+     */
+    protected final List<Path> splits = new ArrayList<>();
 
-  public OutputSink(WALSplitter.PipelineController controller, EntryBuffers entryBuffers,
-    int numWriters) {
-    this.numThreads = numWriters;
-    this.controller = controller;
-    this.entryBuffers = entryBuffers;
-    this.closeThreadPool = Threads.getBoundedCachedThreadPool(numThreads, 30L, TimeUnit.SECONDS,
-      new ThreadFactoryBuilder().setNameFormat("split-log-closeStream-pool-%d").setDaemon(true)
-        .setUncaughtExceptionHandler(Threads.LOGGING_EXCEPTION_HANDLER).build());
-    this.closeCompletionService = new ExecutorCompletionService<>(closeThreadPool);
-  }
+    protected MonitoredTask status = null;
 
-  void setReporter(CancelableProgressable reporter) {
-    this.reporter = reporter;
-  }
+    /**
+     * Used when close this output sink.
+     */
+    protected final ThreadPoolExecutor closeThreadPool;
 
-  void setStatus(MonitoredTask status) {
-    this.status = status;
-  }
+    protected final CompletionService<Void> closeCompletionService;
 
-  /**
-   * Start the threads that will pump data from the entryBuffers to the output files.
-   */
-  public void startWriterThreads() throws IOException {
-    for (int i = 0; i < numThreads; i++) {
-      WriterThread t = new WriterThread(controller, entryBuffers, this, i);
-      t.start();
-      writerThreads.add(t);
-    }
-  }
-
-  public synchronized void restartWriterThreadsIfNeeded() {
-    for (int i = 0; i < writerThreads.size(); i++) {
-      WriterThread t = writerThreads.get(i);
-      if (!t.isAlive()) {
-        String threadName = t.getName();
-        LOG.debug("Replacing dead thread: " + threadName);
-        WriterThread newThread = new WriterThread(controller, entryBuffers, this, threadName);
-        newThread.start();
-        writerThreads.set(i, newThread);
-      }
-    }
-  }
-
-  /**
-   * Wait for writer threads to dump all info to the sink
-   * @return true when there is no error
-   */
-  protected boolean finishWriterThreads(boolean interrupt) throws IOException {
-    LOG.debug("Waiting for split writer threads to finish");
-    boolean progressFailed = false;
-    for (WriterThread t : writerThreads) {
-      t.finish();
-    }
-    if (interrupt) {
-      for (WriterThread t : writerThreads) {
-        t.interrupt(); // interrupt the writer threads. We are stopping now.
-      }
+    public OutputSink(WALSplitter.PipelineController controller, EntryBuffers entryBuffers, int numWriters) {
+        this.numThreads = numWriters;
+        this.controller = controller;
+        this.entryBuffers = entryBuffers;
+        this.closeThreadPool = Threads.getBoundedCachedThreadPool(numThreads, 30L, TimeUnit.SECONDS, new ThreadFactoryBuilder().setNameFormat("split-log-closeStream-pool-%d").setDaemon(true).setUncaughtExceptionHandler(Threads.LOGGING_EXCEPTION_HANDLER).build());
+        this.closeCompletionService = new ExecutorCompletionService<>(closeThreadPool);
     }
 
-    for (WriterThread t : writerThreads) {
-      if (!progressFailed && reporter != null && !reporter.progress()) {
-        progressFailed = true;
-      }
-      try {
-        t.join();
-      } catch (InterruptedException ie) {
-        IOException iie = new InterruptedIOException();
-        iie.initCause(ie);
-        throw iie;
-      }
-    }
-    controller.checkForErrors();
-    final String msg = this.writerThreads.size() + " split writer threads finished";
-    LOG.info(msg);
-    updateStatusWithMsg(msg);
-    return (!progressFailed);
-  }
-
-  long getTotalSkippedEdits() {
-    return this.totalSkippedEdits.get();
-  }
-
-  /** Returns the number of currently opened writers */
-  protected abstract int getNumOpenWriters();
-
-  /**
-   * @param buffer A buffer of some number of edits for a given region.
-   * @throws IOException For any IO errors
-   */
-  protected abstract void append(EntryBuffers.RegionEntryBuffer buffer) throws IOException;
-
-  protected abstract List<Path> close() throws IOException;
-
-  /** Returns a map from encoded region ID to the number of edits written out for that region. */
-  protected abstract Map<String, Long> getOutputCounts();
-
-  /** Returns number of regions we've recovered */
-  protected abstract int getNumberOfRecoveredRegions();
-
-  /**
-   * Some WALEdit's contain only KV's for account on what happened to a region. Not all sinks will
-   * want to get all of those edits.
-   * @return Return true if this sink wants to accept this region-level WALEdit.
-   */
-  protected abstract boolean keepRegionEvent(WAL.Entry entry);
-
-  /**
-   * Set status message in {@link MonitoredTask} instance that is set in this OutputSink
-   * @param msg message to update the status with
-   */
-  protected final void updateStatusWithMsg(String msg) {
-    if (status != null) {
-      status.setStatus(msg);
-    }
-  }
-
-  public static class WriterThread extends Thread {
-    private volatile boolean shouldStop = false;
-    private WALSplitter.PipelineController controller;
-    private EntryBuffers entryBuffers;
-    private OutputSink outputSink = null;
-
-    WriterThread(WALSplitter.PipelineController controller, EntryBuffers entryBuffers,
-      OutputSink sink, int i) {
-      this(controller, entryBuffers, sink, Thread.currentThread().getName() + "-Writer-" + i);
+    void setReporter(CancelableProgressable reporter) {
+        this.reporter = reporter;
     }
 
-    WriterThread(WALSplitter.PipelineController controller, EntryBuffers entryBuffers,
-      OutputSink sink, String threadName) {
-      super(threadName);
-      this.controller = controller;
-      this.entryBuffers = entryBuffers;
-      outputSink = sink;
+    void setStatus(MonitoredTask status) {
+        this.status = status;
     }
 
-    @Override
-    public void run() {
-      try {
-        doRun();
-      } catch (Throwable t) {
-        LOG.error("Exiting thread", t);
-        controller.writerThreadError(t);
-      }
+    /**
+     * Start the threads that will pump data from the entryBuffers to the output files.
+     */
+    public void startWriterThreads() throws IOException {
+        for (int i = 0; i < numThreads; i++) {
+            WriterThread t = new WriterThread(controller, entryBuffers, this, i);
+            t.start();
+            writerThreads.add(t);
+        }
     }
 
-    private void doRun() throws IOException {
-      LOG.trace("Writer thread starting");
-      while (true) {
-        EntryBuffers.RegionEntryBuffer buffer = entryBuffers.getChunkToWrite();
-        if (buffer == null) {
-          // No data currently available, wait on some more to show up
-          synchronized (controller.dataAvailable) {
-            if (shouldStop) {
-              return;
+    public synchronized void restartWriterThreadsIfNeeded() {
+        for (int i = 0; i < writerThreads.size(); i++) {
+            WriterThread t = writerThreads.get(i);
+            if (!t.isAlive()) {
+                String threadName = t.getName();
+                LOG.debug("Replacing dead thread: " + threadName);
+                WriterThread newThread = new WriterThread(controller, entryBuffers, this, threadName);
+                newThread.start();
+                writerThreads.set(i, newThread);
+            }
+        }
+    }
+
+    /**
+     * Wait for writer threads to dump all info to the sink
+     * @return true when there is no error
+     */
+    protected boolean finishWriterThreads(boolean interrupt) throws IOException {
+        LOG.debug("Waiting for split writer threads to finish");
+        boolean progressFailed = false;
+        for (WriterThread t : writerThreads) {
+            t.finish();
+        }
+        if (interrupt) {
+            for (WriterThread t : writerThreads) {
+                // interrupt the writer threads. We are stopping now.
+                t.interrupt();
+            }
+        }
+        for (WriterThread t : writerThreads) {
+            if (!progressFailed && reporter != null && !reporter.progress()) {
+                progressFailed = true;
             }
             try {
-              controller.dataAvailable.wait(500);
+                t.join();
             } catch (InterruptedException ie) {
-              if (!shouldStop) {
-                throw new RuntimeException(ie);
-              }
+                IOException iie = new InterruptedIOException();
+                iie.initCause(ie);
+                throw iie;
             }
-          }
-          continue;
+        }
+        controller.checkForErrors();
+        final String msg = this.writerThreads.size() + " split writer threads finished";
+        LOG.info(msg);
+        updateStatusWithMsg(msg);
+        return (!progressFailed);
+    }
+
+    long getTotalSkippedEdits() {
+        return this.totalSkippedEdits.get();
+    }
+
+    /**
+     * Returns the number of currently opened writers
+     */
+    protected abstract int getNumOpenWriters();
+
+    /**
+     * @param buffer A buffer of some number of edits for a given region.
+     * @throws IOException For any IO errors
+     */
+    protected abstract void append(EntryBuffers.RegionEntryBuffer buffer) throws IOException;
+
+    protected abstract List<Path> close() throws IOException;
+
+    /**
+     * Returns a map from encoded region ID to the number of edits written out for that region.
+     */
+    protected abstract Map<String, Long> getOutputCounts();
+
+    /**
+     * Returns number of regions we've recovered
+     */
+    protected abstract int getNumberOfRecoveredRegions();
+
+    /**
+     * Some WALEdit's contain only KV's for account on what happened to a region. Not all sinks will
+     * want to get all of those edits.
+     * @return Return true if this sink wants to accept this region-level WALEdit.
+     */
+    protected abstract boolean keepRegionEvent(WAL.Entry entry);
+
+    /**
+     * Set status message in {@link MonitoredTask} instance that is set in this OutputSink
+     * @param msg message to update the status with
+     */
+    protected final void updateStatusWithMsg(String msg) {
+        if (status != null) {
+            status.setStatus(msg);
+        }
+    }
+
+    public static class WriterThread extends Thread {
+
+        private volatile boolean shouldStop = false;
+
+        private WALSplitter.PipelineController controller;
+
+        private EntryBuffers entryBuffers;
+
+        private OutputSink outputSink = null;
+
+        WriterThread(WALSplitter.PipelineController controller, EntryBuffers entryBuffers, OutputSink sink, int i) {
+            this(controller, entryBuffers, sink, Thread.currentThread().getName() + "-Writer-" + i);
         }
 
-        assert buffer != null;
-        try {
-          writeBuffer(buffer);
-        } finally {
-          entryBuffers.doneWriting(buffer);
+        WriterThread(WALSplitter.PipelineController controller, EntryBuffers entryBuffers, OutputSink sink, String threadName) {
+            super(threadName);
+            this.controller = controller;
+            this.entryBuffers = entryBuffers;
+            outputSink = sink;
         }
-      }
-    }
 
-    private void writeBuffer(EntryBuffers.RegionEntryBuffer buffer) throws IOException {
-      outputSink.append(buffer);
-    }
+        @Override
+        public void run() {
+            try {
+                org.zlab.ocov.tracker.Runtime.update(this, 117);
+                doRun();
+            } catch (Throwable t) {
+                LOG.error("Exiting thread", t);
+                controller.writerThreadError(t);
+            }
+        }
 
-    private void finish() {
-      synchronized (controller.dataAvailable) {
-        shouldStop = true;
-        controller.dataAvailable.notifyAll();
-      }
+        private void doRun() throws IOException {
+            LOG.trace("Writer thread starting");
+            while (true) {
+                EntryBuffers.RegionEntryBuffer buffer = entryBuffers.getChunkToWrite();
+                if (buffer == null) {
+                    // No data currently available, wait on some more to show up
+                    synchronized (controller.dataAvailable) {
+                        if (shouldStop) {
+                            return;
+                        }
+                        try {
+                            controller.dataAvailable.wait(500);
+                        } catch (InterruptedException ie) {
+                            if (!shouldStop) {
+                                throw new RuntimeException(ie);
+                            }
+                        }
+                    }
+                    continue;
+                }
+                assert buffer != null;
+                try {
+                    writeBuffer(buffer);
+                } finally {
+                    entryBuffers.doneWriting(buffer);
+                }
+            }
+        }
+
+        private void writeBuffer(EntryBuffers.RegionEntryBuffer buffer) throws IOException {
+            outputSink.append(buffer);
+        }
+
+        private void finish() {
+            synchronized (controller.dataAvailable) {
+                shouldStop = true;
+                controller.dataAvailable.notifyAll();
+            }
+        }
     }
-  }
 }

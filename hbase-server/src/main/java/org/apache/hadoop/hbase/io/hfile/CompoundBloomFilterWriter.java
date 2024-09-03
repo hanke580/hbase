@@ -42,241 +42,238 @@ import org.slf4j.LoggerFactory;
  * {@link org.apache.hadoop.hbase.io.hfile.HFile} to the {@link CompoundBloomFilter} class.
  */
 @InterfaceAudience.Private
-public class CompoundBloomFilterWriter extends CompoundBloomFilterBase
-  implements BloomFilterWriter, InlineBlockWriter {
+public class CompoundBloomFilterWriter extends CompoundBloomFilterBase implements BloomFilterWriter, InlineBlockWriter {
 
-  private static final Logger LOG = LoggerFactory.getLogger(CompoundBloomFilterWriter.class);
+    private static final Logger LOG = LoggerFactory.getLogger(CompoundBloomFilterWriter.class);
 
-  /** The current chunk being written to */
-  private BloomFilterChunk chunk;
+    /**
+     * The current chunk being written to
+     */
+    private BloomFilterChunk chunk;
 
-  /** Previous chunk, so that we can create another similar chunk */
-  private BloomFilterChunk prevChunk;
+    /**
+     * Previous chunk, so that we can create another similar chunk
+     */
+    private BloomFilterChunk prevChunk;
 
-  /** Maximum fold factor */
-  private int maxFold;
+    /**
+     * Maximum fold factor
+     */
+    private int maxFold;
 
-  /** The size of individual Bloom filter chunks to create */
-  private int chunkByteSize;
-  /** The prev Cell that was processed */
-  private Cell prevCell;
+    /**
+     * The size of individual Bloom filter chunks to create
+     */
+    private int chunkByteSize;
 
-  /** A Bloom filter chunk enqueued for writing */
-  private static class ReadyChunk {
-    int chunkId;
-    byte[] firstKey;
-    BloomFilterChunk chunk;
-  }
+    /**
+     * The prev Cell that was processed
+     */
+    private Cell prevCell;
 
-  private Queue<ReadyChunk> readyChunks = new LinkedList<>();
+    /**
+     * A Bloom filter chunk enqueued for writing
+     */
+    private static class ReadyChunk {
 
-  /** The first key in the current Bloom filter chunk. */
-  private byte[] firstKeyInChunk = null;
+        int chunkId;
 
-  private HFileBlockIndex.BlockIndexWriter bloomBlockIndexWriter =
-    new HFileBlockIndex.BlockIndexWriter();
+        byte[] firstKey;
 
-  /** Whether to cache-on-write compound Bloom filter chunks */
-  private boolean cacheOnWrite;
-
-  private BloomType bloomType;
-
-  /**
-   * each chunk's size in bytes. The real chunk size might be different as required by the fold
-   * factor. target false positive rate hash function type to use maximum degree of folding allowed
-   * the bloom type
-   */
-  public CompoundBloomFilterWriter(int chunkByteSizeHint, float errorRate, int hashType,
-    int maxFold, boolean cacheOnWrite, CellComparator comparator, BloomType bloomType) {
-    chunkByteSize = BloomFilterUtil.computeFoldableByteSize(chunkByteSizeHint * 8L, maxFold);
-
-    this.errorRate = errorRate;
-    this.hashType = hashType;
-    this.maxFold = maxFold;
-    this.cacheOnWrite = cacheOnWrite;
-    this.comparator = comparator;
-    this.bloomType = bloomType;
-  }
-
-  @Override
-  public boolean shouldWriteBlock(boolean closing) {
-    enqueueReadyChunk(closing);
-    return !readyChunks.isEmpty();
-  }
-
-  /**
-   * Enqueue the current chunk if it is ready to be written out.
-   * @param closing true if we are closing the file, so we do not expect new keys to show up
-   */
-  private void enqueueReadyChunk(boolean closing) {
-    if (chunk == null || (chunk.getKeyCount() < chunk.getMaxKeys() && !closing)) {
-      return;
+        BloomFilterChunk chunk;
     }
 
-    if (firstKeyInChunk == null) {
-      throw new NullPointerException(
-        "Trying to enqueue a chunk, " + "but first key is null: closing=" + closing + ", keyCount="
-          + chunk.getKeyCount() + ", maxKeys=" + chunk.getMaxKeys());
-    }
+    private Queue<ReadyChunk> readyChunks = new LinkedList<>();
 
-    ReadyChunk readyChunk = new ReadyChunk();
-    readyChunk.chunkId = numChunks - 1;
-    readyChunk.chunk = chunk;
-    readyChunk.firstKey = firstKeyInChunk;
-    readyChunks.add(readyChunk);
+    /**
+     * The first key in the current Bloom filter chunk.
+     */
+    private byte[] firstKeyInChunk = null;
 
-    long prevMaxKeys = chunk.getMaxKeys();
-    long prevByteSize = chunk.getByteSize();
+    private HFileBlockIndex.BlockIndexWriter bloomBlockIndexWriter = new HFileBlockIndex.BlockIndexWriter();
 
-    chunk.compactBloom();
+    /**
+     * Whether to cache-on-write compound Bloom filter chunks
+     */
+    private boolean cacheOnWrite;
 
-    if (LOG.isTraceEnabled() && prevByteSize != chunk.getByteSize()) {
-      LOG.trace("Compacted Bloom chunk #" + readyChunk.chunkId + " from [" + prevMaxKeys
-        + " max keys, " + prevByteSize + " bytes] to [" + chunk.getMaxKeys() + " max keys, "
-        + chunk.getByteSize() + " bytes]");
-    }
+    private BloomType bloomType;
 
-    totalMaxKeys += chunk.getMaxKeys();
-    totalByteSize += chunk.getByteSize();
-
-    firstKeyInChunk = null;
-    prevChunk = chunk;
-    chunk = null;
-  }
-
-  @Override
-  public void append(Cell cell) throws IOException {
-    if (cell == null) throw new NullPointerException();
-
-    enqueueReadyChunk(false);
-
-    if (chunk == null) {
-      if (firstKeyInChunk != null) {
-        throw new IllegalStateException(
-          "First key in chunk already set: " + Bytes.toStringBinary(firstKeyInChunk));
-      }
-      // This will be done only once per chunk
-      if (bloomType == BloomType.ROWCOL) {
-        firstKeyInChunk = PrivateCellUtil
-          .getCellKeySerializedAsKeyValueKey(PrivateCellUtil.createFirstOnRowCol(cell));
-      } else {
-        firstKeyInChunk = CellUtil.copyRow(cell);
-      }
-      allocateNewChunk();
-    }
-
-    chunk.add(cell);
-    this.prevCell = cell;
-    ++totalKeyCount;
-  }
-
-  @Override
-  public void beforeShipped() throws IOException {
-    if (this.prevCell != null) {
-      this.prevCell = KeyValueUtil.toNewKeyCell(this.prevCell);
-    }
-  }
-
-  @Override
-  public Cell getPrevCell() {
-    return this.prevCell;
-  }
-
-  private void allocateNewChunk() {
-    if (prevChunk == null) {
-      // First chunk
-      chunk = BloomFilterUtil.createBySize(chunkByteSize, errorRate, hashType, maxFold, bloomType);
-    } else {
-      // Use the same parameters as the last chunk, but a new array and
-      // a zero key count.
-      chunk = prevChunk.createAnother();
-    }
-
-    if (chunk.getKeyCount() != 0) {
-      throw new IllegalStateException("keyCount=" + chunk.getKeyCount() + " > 0");
-    }
-
-    chunk.allocBloom();
-    ++numChunks;
-  }
-
-  @Override
-  public void writeInlineBlock(DataOutput out) throws IOException {
-    // We don't remove the chunk from the queue here, because we might need it
-    // again for cache-on-write.
-    ReadyChunk readyChunk = readyChunks.peek();
-
-    BloomFilterChunk readyChunkBloom = readyChunk.chunk;
-    readyChunkBloom.writeBloom(out);
-  }
-
-  @Override
-  public void blockWritten(long offset, int onDiskSize, int uncompressedSize) {
-    ReadyChunk readyChunk = readyChunks.remove();
-    bloomBlockIndexWriter.addEntry(readyChunk.firstKey, offset, onDiskSize);
-  }
-
-  @Override
-  public BlockType getInlineBlockType() {
-    return BlockType.BLOOM_CHUNK;
-  }
-
-  private class MetaWriter implements Writable {
-    protected MetaWriter() {
+    /**
+     * each chunk's size in bytes. The real chunk size might be different as required by the fold
+     * factor. target false positive rate hash function type to use maximum degree of folding allowed
+     * the bloom type
+     */
+    public CompoundBloomFilterWriter(int chunkByteSizeHint, float errorRate, int hashType, int maxFold, boolean cacheOnWrite, CellComparator comparator, BloomType bloomType) {
+        chunkByteSize = BloomFilterUtil.computeFoldableByteSize(chunkByteSizeHint * 8L, maxFold);
+        this.errorRate = errorRate;
+        this.hashType = hashType;
+        this.maxFold = maxFold;
+        this.cacheOnWrite = cacheOnWrite;
+        this.comparator = comparator;
+        this.bloomType = bloomType;
     }
 
     @Override
-    public void readFields(DataInput in) throws IOException {
-      throw new IOException("Cant read with this class.");
+    public boolean shouldWriteBlock(boolean closing) {
+        enqueueReadyChunk(closing);
+        return !readyChunks.isEmpty();
     }
 
     /**
-     * This is modeled after {@link CompoundBloomFilterWriter.MetaWriter} for simplicity, although
-     * the two metadata formats do not have to be consistent. This does have to be consistent with
-     * how
-     * {@link CompoundBloomFilter#CompoundBloomFilter(DataInput, org.apache.hadoop.hbase.io.hfile.HFile.Reader, BloomFilterMetrics)}
-     * reads fields.
+     * Enqueue the current chunk if it is ready to be written out.
+     * @param closing true if we are closing the file, so we do not expect new keys to show up
      */
-    @Override
-    public void write(DataOutput out) throws IOException {
-      out.writeInt(VERSION);
-
-      out.writeLong(getByteSize());
-      out.writeInt(prevChunk.getHashCount());
-      out.writeInt(prevChunk.getHashType());
-      out.writeLong(getKeyCount());
-      out.writeLong(getMaxKeys());
-
-      // Fields that don't have equivalents in ByteBloomFilter.
-      out.writeInt(numChunks);
-      if (comparator != null) {
-        Bytes.writeByteArray(out, Bytes.toBytes(comparator.getClass().getName()));
-      } else {
-        // Internally writes a 0 vint if the byte[] is null
-        Bytes.writeByteArray(out, null);
-      }
-
-      // Write a single-level index without compression or block header.
-      bloomBlockIndexWriter.writeSingleLevelIndex(out, "Bloom filter");
+    private void enqueueReadyChunk(boolean closing) {
+        if (chunk == null || (chunk.getKeyCount() < chunk.getMaxKeys() && !closing)) {
+            return;
+        }
+        if (firstKeyInChunk == null) {
+            throw new NullPointerException("Trying to enqueue a chunk, " + "but first key is null: closing=" + closing + ", keyCount=" + chunk.getKeyCount() + ", maxKeys=" + chunk.getMaxKeys());
+        }
+        ReadyChunk readyChunk = new ReadyChunk();
+        readyChunk.chunkId = numChunks - 1;
+        readyChunk.chunk = chunk;
+        readyChunk.firstKey = firstKeyInChunk;
+        readyChunks.add(readyChunk);
+        long prevMaxKeys = chunk.getMaxKeys();
+        long prevByteSize = chunk.getByteSize();
+        chunk.compactBloom();
+        if (LOG.isTraceEnabled() && prevByteSize != chunk.getByteSize()) {
+            LOG.trace("Compacted Bloom chunk #" + readyChunk.chunkId + " from [" + prevMaxKeys + " max keys, " + prevByteSize + " bytes] to [" + chunk.getMaxKeys() + " max keys, " + chunk.getByteSize() + " bytes]");
+        }
+        totalMaxKeys += chunk.getMaxKeys();
+        totalByteSize += chunk.getByteSize();
+        firstKeyInChunk = null;
+        prevChunk = chunk;
+        chunk = null;
     }
-  }
 
-  @Override
-  public void compactBloom() {
-  }
+    @Override
+    public void append(Cell cell) throws IOException {
+        if (cell == null)
+            throw new NullPointerException();
+        enqueueReadyChunk(false);
+        if (chunk == null) {
+            if (firstKeyInChunk != null) {
+                throw new IllegalStateException("First key in chunk already set: " + Bytes.toStringBinary(firstKeyInChunk));
+            }
+            // This will be done only once per chunk
+            if (bloomType == BloomType.ROWCOL) {
+                firstKeyInChunk = PrivateCellUtil.getCellKeySerializedAsKeyValueKey(PrivateCellUtil.createFirstOnRowCol(cell));
+            } else {
+                firstKeyInChunk = CellUtil.copyRow(cell);
+            }
+            allocateNewChunk();
+        }
+        chunk.add(cell);
+        this.prevCell = cell;
+        org.zlab.ocov.tracker.Runtime.update(this, 36, cell);
+        ++totalKeyCount;
+    }
 
-  @Override
-  public Writable getMetaWriter() {
-    return new MetaWriter();
-  }
+    @Override
+    public void beforeShipped() throws IOException {
+        if (this.prevCell != null) {
+            this.prevCell = KeyValueUtil.toNewKeyCell(this.prevCell);
+        }
+    }
 
-  @Override
-  public Writable getDataWriter() {
-    return null;
-  }
+    @Override
+    public Cell getPrevCell() {
+        return this.prevCell;
+    }
 
-  @Override
-  public boolean getCacheOnWrite() {
-    return cacheOnWrite;
-  }
+    private void allocateNewChunk() {
+        if (prevChunk == null) {
+            // First chunk
+            chunk = BloomFilterUtil.createBySize(chunkByteSize, errorRate, hashType, maxFold, bloomType);
+        } else {
+            // Use the same parameters as the last chunk, but a new array and
+            // a zero key count.
+            chunk = prevChunk.createAnother();
+        }
+        if (chunk.getKeyCount() != 0) {
+            throw new IllegalStateException("keyCount=" + chunk.getKeyCount() + " > 0");
+        }
+        chunk.allocBloom();
+        ++numChunks;
+    }
+
+    @Override
+    public void writeInlineBlock(DataOutput out) throws IOException {
+        // We don't remove the chunk from the queue here, because we might need it
+        // again for cache-on-write.
+        ReadyChunk readyChunk = readyChunks.peek();
+        BloomFilterChunk readyChunkBloom = readyChunk.chunk;
+        readyChunkBloom.writeBloom(out);
+    }
+
+    @Override
+    public void blockWritten(long offset, int onDiskSize, int uncompressedSize) {
+        ReadyChunk readyChunk = readyChunks.remove();
+        bloomBlockIndexWriter.addEntry(readyChunk.firstKey, offset, onDiskSize);
+    }
+
+    @Override
+    public BlockType getInlineBlockType() {
+        return BlockType.BLOOM_CHUNK;
+    }
+
+    private class MetaWriter implements Writable {
+
+        protected MetaWriter() {
+        }
+
+        @Override
+        public void readFields(DataInput in) throws IOException {
+            throw new IOException("Cant read with this class.");
+        }
+
+        /**
+         * This is modeled after {@link CompoundBloomFilterWriter.MetaWriter} for simplicity, although
+         * the two metadata formats do not have to be consistent. This does have to be consistent with
+         * how
+         * {@link CompoundBloomFilter#CompoundBloomFilter(DataInput, org.apache.hadoop.hbase.io.hfile.HFile.Reader, BloomFilterMetrics)}
+         * reads fields.
+         */
+        @Override
+        public void write(DataOutput out) throws IOException {
+            out.writeInt(VERSION);
+            out.writeLong(getByteSize());
+            out.writeInt(prevChunk.getHashCount());
+            out.writeInt(prevChunk.getHashType());
+            out.writeLong(getKeyCount());
+            out.writeLong(getMaxKeys());
+            // Fields that don't have equivalents in ByteBloomFilter.
+            out.writeInt(numChunks);
+            if (comparator != null) {
+                Bytes.writeByteArray(out, Bytes.toBytes(comparator.getClass().getName()));
+            } else {
+                // Internally writes a 0 vint if the byte[] is null
+                Bytes.writeByteArray(out, null);
+            }
+            // Write a single-level index without compression or block header.
+            bloomBlockIndexWriter.writeSingleLevelIndex(out, "Bloom filter");
+        }
+    }
+
+    @Override
+    public void compactBloom() {
+    }
+
+    @Override
+    public Writable getMetaWriter() {
+        return new MetaWriter();
+    }
+
+    @Override
+    public Writable getDataWriter() {
+        return null;
+    }
+
+    @Override
+    public boolean getCacheOnWrite() {
+        return cacheOnWrite;
+    }
 }

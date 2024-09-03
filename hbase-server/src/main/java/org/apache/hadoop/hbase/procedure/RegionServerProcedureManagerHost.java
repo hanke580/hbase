@@ -33,44 +33,43 @@ import org.slf4j.LoggerFactory;
  * procedure manager through this class.
  */
 @InterfaceAudience.Private
-public class RegionServerProcedureManagerHost
-  extends ProcedureManagerHost<RegionServerProcedureManager> {
+public class RegionServerProcedureManagerHost extends ProcedureManagerHost<RegionServerProcedureManager> {
 
-  private static final Logger LOG = LoggerFactory.getLogger(RegionServerProcedureManagerHost.class);
+    private static final Logger LOG = LoggerFactory.getLogger(RegionServerProcedureManagerHost.class);
 
-  public void initialize(RegionServerServices rss) throws KeeperException {
-    for (RegionServerProcedureManager proc : procedures) {
-      LOG.debug("Procedure {} initializing", proc.getProcedureSignature());
-      proc.initialize(rss);
-      LOG.debug("Procedure {} initialized", proc.getProcedureSignature());
+    public void initialize(RegionServerServices rss) throws KeeperException {
+        for (RegionServerProcedureManager proc : procedures) {
+            LOG.debug("Procedure {} initializing", proc.getProcedureSignature());
+            proc.initialize(rss);
+            org.zlab.ocov.tracker.Runtime.update(proc, 120, rss);
+            LOG.debug("Procedure {} initialized", proc.getProcedureSignature());
+        }
     }
-  }
 
-  public void start() {
-    for (RegionServerProcedureManager proc : procedures) {
-      LOG.debug("Procedure {} starting", proc.getProcedureSignature());
-      proc.start();
-      LOG.debug("Procedure {} started", proc.getProcedureSignature());
+    public void start() {
+        for (RegionServerProcedureManager proc : procedures) {
+            LOG.debug("Procedure {} starting", proc.getProcedureSignature());
+            proc.start();
+            LOG.debug("Procedure {} started", proc.getProcedureSignature());
+        }
     }
-  }
 
-  public void stop(boolean force) {
-    for (RegionServerProcedureManager proc : procedures) {
-      try {
-        proc.stop(force);
-      } catch (IOException e) {
-        LOG.warn("Failed to close procedure " + proc.getProcedureSignature() + " cleanly", e);
-      }
+    public void stop(boolean force) {
+        for (RegionServerProcedureManager proc : procedures) {
+            try {
+                proc.stop(force);
+            } catch (IOException e) {
+                LOG.warn("Failed to close procedure " + proc.getProcedureSignature() + " cleanly", e);
+            }
+        }
     }
-  }
 
-  @Override
-  public void loadProcedures(Configuration conf) {
-    loadUserProcedures(conf, REGIONSERVER_PROCEDURE_CONF_KEY);
-    // load the default snapshot manager
-    procedures.add(new RegionServerSnapshotManager());
-    // load the default flush region procedure manager
-    procedures.add(new RegionServerFlushTableProcedureManager());
-  }
-
+    @Override
+    public void loadProcedures(Configuration conf) {
+        loadUserProcedures(conf, REGIONSERVER_PROCEDURE_CONF_KEY);
+        // load the default snapshot manager
+        procedures.add(new RegionServerSnapshotManager());
+        // load the default flush region procedure manager
+        procedures.add(new RegionServerFlushTableProcedureManager());
+    }
 }
