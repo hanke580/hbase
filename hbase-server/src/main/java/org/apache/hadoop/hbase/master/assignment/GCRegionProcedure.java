@@ -35,9 +35,7 @@ import org.apache.hadoop.hbase.util.CommonFSUtils;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hbase.thirdparty.com.google.common.collect.Lists;
-
 import org.apache.hadoop.hbase.shaded.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.GCRegionState;
@@ -51,124 +49,118 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.G
  */
 @InterfaceAudience.Private
 public class GCRegionProcedure extends AbstractStateMachineRegionProcedure<GCRegionState> {
-  private static final Logger LOG = LoggerFactory.getLogger(GCRegionProcedure.class);
 
-  public GCRegionProcedure(final MasterProcedureEnv env, final RegionInfo hri) {
-    super(env, hri);
-  }
+    private static final Logger LOG = LoggerFactory.getLogger(GCRegionProcedure.class);
 
-  public GCRegionProcedure() {
-    // Required by the Procedure framework to create the procedure on replay
-    super();
-  }
-
-  @Override
-  public TableOperationType getTableOperationType() {
-    return TableOperationType.REGION_GC;
-  }
-
-  @Override
-  protected Flow executeFromState(MasterProcedureEnv env, GCRegionState state)
-    throws ProcedureSuspendedException, ProcedureYieldException, InterruptedException {
-    if (LOG.isTraceEnabled()) {
-      LOG.trace(this + " execute state=" + state);
+    public GCRegionProcedure(final MasterProcedureEnv env, final RegionInfo hri) {
+        super(env, hri);
     }
-    MasterServices masterServices = env.getMasterServices();
-    try {
-      switch (state) {
-        case GC_REGION_PREPARE:
-          // Nothing to do to prepare.
-          setNextState(GCRegionState.GC_REGION_ARCHIVE);
-          break;
-        case GC_REGION_ARCHIVE:
-          MasterFileSystem mfs = masterServices.getMasterFileSystem();
-          FileSystem fs = mfs.getFileSystem();
-          if (HFileArchiver.exists(masterServices.getConfiguration(), fs, getRegion())) {
-            if (LOG.isDebugEnabled()) {
-              LOG.debug("Archiving region=" + getRegion().getShortNameToLog());
-            }
-            HFileArchiver.archiveRegion(masterServices.getConfiguration(), fs, getRegion());
-          }
-          FileSystem walFs = mfs.getWALFileSystem();
-          // Cleanup the directories on WAL filesystem also
-          Path regionWALDir = CommonFSUtils.getWALRegionDir(env.getMasterConfiguration(),
-            getRegion().getTable(), getRegion().getEncodedName());
-          if (walFs.exists(regionWALDir)) {
-            if (!walFs.delete(regionWALDir, true)) {
-              LOG.debug("Failed to delete {}", regionWALDir);
-            }
-          }
-          Path wrongRegionWALDir = CommonFSUtils.getWrongWALRegionDir(env.getMasterConfiguration(),
-            getRegion().getTable(), getRegion().getEncodedName());
-          if (walFs.exists(wrongRegionWALDir)) {
-            if (!walFs.delete(wrongRegionWALDir, true)) {
-              LOG.debug("Failed to delete {}", regionWALDir);
-            }
-          }
-          setNextState(GCRegionState.GC_REGION_PURGE_METADATA);
-          break;
-        case GC_REGION_PURGE_METADATA:
-          // TODO: Purge metadata before removing from HDFS? This ordering is copied
-          // from CatalogJanitor.
-          AssignmentManager am = masterServices.getAssignmentManager();
-          if (am != null) {
-            if (am.getRegionStates() != null) {
-              am.getRegionStates().deleteRegion(getRegion());
-            }
-          }
-          MetaTableAccessor.deleteRegionInfo(masterServices.getConnection(), getRegion());
-          masterServices.getServerManager().removeRegion(getRegion());
-          FavoredNodesManager fnm = masterServices.getFavoredNodesManager();
-          if (fnm != null) {
-            fnm.deleteFavoredNodesForRegions(Lists.newArrayList(getRegion()));
-          }
-          return Flow.NO_MORE_STATE;
-        default:
-          throw new UnsupportedOperationException(this + " unhandled state=" + state);
-      }
-    } catch (IOException ioe) {
-      // TODO: This is going to spew log? Add retry backoff
-      LOG.warn("Error trying to GC " + getRegion().getShortNameToLog() + "; retrying...", ioe);
+
+    public GCRegionProcedure() {
+        // Required by the Procedure framework to create the procedure on replay
+        super();
     }
-    return Flow.HAS_MORE_STATE;
-  }
 
-  @Override
-  protected void rollbackState(MasterProcedureEnv env, GCRegionState state)
-    throws IOException, InterruptedException {
-    // no-op
-  }
+    @Override
+    public TableOperationType getTableOperationType() {
+        return TableOperationType.REGION_GC;
+    }
 
-  @Override
-  protected GCRegionState getState(int stateId) {
-    return GCRegionState.forNumber(stateId);
-  }
+    @Override
+    protected Flow executeFromState(MasterProcedureEnv env, GCRegionState state) throws ProcedureSuspendedException, ProcedureYieldException, InterruptedException {
+        if (LOG.isTraceEnabled()) {
+            LOG.trace(this + " execute state=" + state);
+        }
+        MasterServices masterServices = env.getMasterServices();
+        try {
+            switch(state) {
+                case GC_REGION_PREPARE:
+                    // Nothing to do to prepare.
+                    setNextState(GCRegionState.GC_REGION_ARCHIVE);
+                    break;
+                case GC_REGION_ARCHIVE:
+                    MasterFileSystem mfs = masterServices.getMasterFileSystem();
+                    FileSystem fs = mfs.getFileSystem();
+                    if (HFileArchiver.exists(masterServices.getConfiguration(), fs, getRegion())) {
+                        if (LOG.isDebugEnabled()) {
+                            LOG.debug("Archiving region=" + getRegion().getShortNameToLog());
+                        }
+                        HFileArchiver.archiveRegion(masterServices.getConfiguration(), fs, getRegion());
+                    }
+                    FileSystem walFs = mfs.getWALFileSystem();
+                    // Cleanup the directories on WAL filesystem also
+                    Path regionWALDir = CommonFSUtils.getWALRegionDir(env.getMasterConfiguration(), getRegion().getTable(), getRegion().getEncodedName());
+                    if (walFs.exists(regionWALDir)) {
+                        if (!walFs.delete(regionWALDir, true)) {
+                            LOG.debug("Failed to delete {}", regionWALDir);
+                        }
+                    }
+                    Path wrongRegionWALDir = CommonFSUtils.getWrongWALRegionDir(env.getMasterConfiguration(), getRegion().getTable(), getRegion().getEncodedName());
+                    if (walFs.exists(wrongRegionWALDir)) {
+                        if (!walFs.delete(wrongRegionWALDir, true)) {
+                            LOG.debug("Failed to delete {}", regionWALDir);
+                        }
+                    }
+                    setNextState(GCRegionState.GC_REGION_PURGE_METADATA);
+                    break;
+                case GC_REGION_PURGE_METADATA:
+                    // TODO: Purge metadata before removing from HDFS? This ordering is copied
+                    // from CatalogJanitor.
+                    AssignmentManager am = masterServices.getAssignmentManager();
+                    if (am != null) {
+                        if (am.getRegionStates() != null) {
+                            am.getRegionStates().deleteRegion(getRegion());
+                        }
+                    }
+                    MetaTableAccessor.deleteRegionInfo(masterServices.getConnection(), getRegion());
+                    masterServices.getServerManager().removeRegion(getRegion());
+                    FavoredNodesManager fnm = masterServices.getFavoredNodesManager();
+                    if (fnm != null) {
+                        fnm.deleteFavoredNodesForRegions(Lists.newArrayList(getRegion()));
+                    }
+                    return Flow.NO_MORE_STATE;
+                default:
+                    throw new UnsupportedOperationException(this + " unhandled state=" + state);
+            }
+        } catch (IOException ioe) {
+            // TODO: This is going to spew log? Add retry backoff
+            LOG.warn("Error trying to GC " + getRegion().getShortNameToLog() + "; retrying...", ioe);
+        }
+        return Flow.HAS_MORE_STATE;
+    }
 
-  @Override
-  protected int getStateId(GCRegionState state) {
-    return state.getNumber();
-  }
+    @Override
+    protected void rollbackState(MasterProcedureEnv env, GCRegionState state) throws IOException, InterruptedException {
+        // no-op
+    }
 
-  @Override
-  protected GCRegionState getInitialState() {
-    return GCRegionState.GC_REGION_PREPARE;
-  }
+    @Override
+    protected GCRegionState getState(int stateId) {
+        return GCRegionState.forNumber(stateId);
+    }
 
-  @Override
-  protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    super.serializeStateData(serializer);
-    // Double serialization of regionname. Superclass is also serializing. Fix.
-    final MasterProcedureProtos.GCRegionStateData.Builder msg =
-      MasterProcedureProtos.GCRegionStateData.newBuilder()
-        .setRegionInfo(ProtobufUtil.toRegionInfo(getRegion()));
-    serializer.serialize(msg.build());
-  }
+    @Override
+    protected int getStateId(GCRegionState state) {
+        return state.getNumber();
+    }
 
-  @Override
-  protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    super.deserializeStateData(serializer);
-    final MasterProcedureProtos.GCRegionStateData msg =
-      serializer.deserialize(MasterProcedureProtos.GCRegionStateData.class);
-    setRegion(ProtobufUtil.toRegionInfo(msg.getRegionInfo()));
-  }
+    @Override
+    protected GCRegionState getInitialState() {
+        return GCRegionState.GC_REGION_PREPARE;
+    }
+
+    @Override
+    protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        super.serializeStateData(serializer);
+        // Double serialization of regionname. Superclass is also serializing. Fix.
+        final MasterProcedureProtos.GCRegionStateData.Builder msg = MasterProcedureProtos.GCRegionStateData.newBuilder().setRegionInfo(ProtobufUtil.toRegionInfo(getRegion()));
+        serializer.serialize(((org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.GCRegionStateData) org.zlab.ocov.tracker.Runtime.update(msg.build(), 23, serializer)));
+    }
+
+    @Override
+    protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        super.deserializeStateData(serializer);
+        final MasterProcedureProtos.GCRegionStateData msg = serializer.deserialize(MasterProcedureProtos.GCRegionStateData.class);
+        setRegion(ProtobufUtil.toRegionInfo(msg.getRegionInfo()));
+    }
 }

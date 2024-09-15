@@ -29,7 +29,6 @@ import org.apache.hadoop.hbase.util.RetryCounter;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.SwitchRpcThrottleState;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.SwitchRpcThrottleStateData;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.ProcedureProtos;
@@ -38,131 +37,124 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.ProcedureProtos;
  * The procedure to switch rpc throttle
  */
 @InterfaceAudience.Private
-public class SwitchRpcThrottleProcedure
-  extends StateMachineProcedure<MasterProcedureEnv, SwitchRpcThrottleState>
-  implements ServerProcedureInterface {
+public class SwitchRpcThrottleProcedure extends StateMachineProcedure<MasterProcedureEnv, SwitchRpcThrottleState> implements ServerProcedureInterface {
 
-  private static Logger LOG = LoggerFactory.getLogger(SwitchRpcThrottleProcedure.class);
+    private static Logger LOG = LoggerFactory.getLogger(SwitchRpcThrottleProcedure.class);
 
-  private RpcThrottleStorage rpcThrottleStorage;
-  private boolean rpcThrottleEnabled;
-  private ProcedurePrepareLatch syncLatch;
-  private ServerName serverName;
-  private RetryCounter retryCounter;
+    private RpcThrottleStorage rpcThrottleStorage;
 
-  public SwitchRpcThrottleProcedure() {
-  }
+    private boolean rpcThrottleEnabled;
 
-  public SwitchRpcThrottleProcedure(RpcThrottleStorage rpcThrottleStorage,
-    boolean rpcThrottleEnabled, ServerName serverName, final ProcedurePrepareLatch syncLatch) {
-    this.rpcThrottleStorage = rpcThrottleStorage;
-    this.syncLatch = syncLatch;
-    this.rpcThrottleEnabled = rpcThrottleEnabled;
-    this.serverName = serverName;
-  }
+    private ProcedurePrepareLatch syncLatch;
 
-  @Override
-  protected Flow executeFromState(MasterProcedureEnv env, SwitchRpcThrottleState state)
-    throws ProcedureSuspendedException, ProcedureYieldException, InterruptedException {
-    switch (state) {
-      case UPDATE_SWITCH_RPC_THROTTLE_STORAGE:
-        try {
-          switchThrottleState(env, rpcThrottleEnabled);
-        } catch (IOException e) {
-          if (retryCounter == null) {
-            retryCounter = ProcedureUtil.createRetryCounter(env.getMasterConfiguration());
-          }
-          long backoff = retryCounter.getBackoffTimeAndIncrementAttempts();
-          LOG.warn("Failed to store rpc throttle value {}, sleep {} secs and retry",
-            rpcThrottleEnabled, backoff / 1000, e);
-          setTimeout(Math.toIntExact(backoff));
-          setState(ProcedureProtos.ProcedureState.WAITING_TIMEOUT);
-          skipPersistence();
-          throw new ProcedureSuspendedException();
-        }
-        setNextState(SwitchRpcThrottleState.SWITCH_RPC_THROTTLE_ON_RS);
-        return Flow.HAS_MORE_STATE;
-      case SWITCH_RPC_THROTTLE_ON_RS:
-        SwitchRpcThrottleRemoteProcedure[] subProcedures =
-          env.getMasterServices().getServerManager().getOnlineServersList().stream()
-            .map(sn -> new SwitchRpcThrottleRemoteProcedure(sn, rpcThrottleEnabled))
-            .toArray(SwitchRpcThrottleRemoteProcedure[]::new);
-        addChildProcedure(subProcedures);
-        setNextState(SwitchRpcThrottleState.POST_SWITCH_RPC_THROTTLE);
-        return Flow.HAS_MORE_STATE;
-      case POST_SWITCH_RPC_THROTTLE:
-        ProcedurePrepareLatch.releaseLatch(syncLatch, this);
-        return Flow.NO_MORE_STATE;
-      default:
-        throw new UnsupportedOperationException("unhandled state=" + state);
+    private ServerName serverName;
+
+    private RetryCounter retryCounter;
+
+    public SwitchRpcThrottleProcedure() {
     }
-  }
 
-  @Override
-  protected void rollbackState(MasterProcedureEnv env, SwitchRpcThrottleState state)
-    throws IOException, InterruptedException {
-  }
+    public SwitchRpcThrottleProcedure(RpcThrottleStorage rpcThrottleStorage, boolean rpcThrottleEnabled, ServerName serverName, final ProcedurePrepareLatch syncLatch) {
+        this.rpcThrottleStorage = rpcThrottleStorage;
+        this.syncLatch = syncLatch;
+        this.rpcThrottleEnabled = rpcThrottleEnabled;
+        this.serverName = serverName;
+    }
 
-  @Override
-  protected SwitchRpcThrottleState getState(int stateId) {
-    return SwitchRpcThrottleState.forNumber(stateId);
-  }
+    @Override
+    protected Flow executeFromState(MasterProcedureEnv env, SwitchRpcThrottleState state) throws ProcedureSuspendedException, ProcedureYieldException, InterruptedException {
+        switch(state) {
+            case UPDATE_SWITCH_RPC_THROTTLE_STORAGE:
+                try {
+                    switchThrottleState(env, rpcThrottleEnabled);
+                } catch (IOException e) {
+                    if (retryCounter == null) {
+                        retryCounter = ProcedureUtil.createRetryCounter(env.getMasterConfiguration());
+                    }
+                    long backoff = retryCounter.getBackoffTimeAndIncrementAttempts();
+                    LOG.warn("Failed to store rpc throttle value {}, sleep {} secs and retry", rpcThrottleEnabled, backoff / 1000, e);
+                    setTimeout(Math.toIntExact(backoff));
+                    setState(ProcedureProtos.ProcedureState.WAITING_TIMEOUT);
+                    skipPersistence();
+                    throw new ProcedureSuspendedException();
+                }
+                setNextState(SwitchRpcThrottleState.SWITCH_RPC_THROTTLE_ON_RS);
+                return Flow.HAS_MORE_STATE;
+            case SWITCH_RPC_THROTTLE_ON_RS:
+                SwitchRpcThrottleRemoteProcedure[] subProcedures = env.getMasterServices().getServerManager().getOnlineServersList().stream().map(sn -> new SwitchRpcThrottleRemoteProcedure(sn, rpcThrottleEnabled)).toArray(SwitchRpcThrottleRemoteProcedure[]::new);
+                addChildProcedure(subProcedures);
+                setNextState(SwitchRpcThrottleState.POST_SWITCH_RPC_THROTTLE);
+                return Flow.HAS_MORE_STATE;
+            case POST_SWITCH_RPC_THROTTLE:
+                ProcedurePrepareLatch.releaseLatch(syncLatch, this);
+                return Flow.NO_MORE_STATE;
+            default:
+                throw new UnsupportedOperationException("unhandled state=" + state);
+        }
+    }
 
-  @Override
-  protected int getStateId(SwitchRpcThrottleState throttleState) {
-    return throttleState.getNumber();
-  }
+    @Override
+    protected void rollbackState(MasterProcedureEnv env, SwitchRpcThrottleState state) throws IOException, InterruptedException {
+    }
 
-  @Override
-  protected SwitchRpcThrottleState getInitialState() {
-    return SwitchRpcThrottleState.UPDATE_SWITCH_RPC_THROTTLE_STORAGE;
-  }
+    @Override
+    protected SwitchRpcThrottleState getState(int stateId) {
+        return SwitchRpcThrottleState.forNumber(stateId);
+    }
 
-  @Override
-  protected SwitchRpcThrottleState getCurrentState() {
-    return super.getCurrentState();
-  }
+    @Override
+    protected int getStateId(SwitchRpcThrottleState throttleState) {
+        return throttleState.getNumber();
+    }
 
-  @Override
-  protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    super.serializeStateData(serializer);
-    serializer.serialize(
-      SwitchRpcThrottleStateData.newBuilder().setRpcThrottleEnabled(rpcThrottleEnabled).build());
-  }
+    @Override
+    protected SwitchRpcThrottleState getInitialState() {
+        return SwitchRpcThrottleState.UPDATE_SWITCH_RPC_THROTTLE_STORAGE;
+    }
 
-  @Override
-  protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    super.deserializeStateData(serializer);
-    SwitchRpcThrottleStateData data = serializer.deserialize(SwitchRpcThrottleStateData.class);
-    rpcThrottleEnabled = data.getRpcThrottleEnabled();
-  }
+    @Override
+    protected SwitchRpcThrottleState getCurrentState() {
+        return super.getCurrentState();
+    }
 
-  @Override
-  public ServerName getServerName() {
-    return serverName;
-  }
+    @Override
+    protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        super.serializeStateData(serializer);
+        serializer.serialize(((org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.SwitchRpcThrottleStateData) org.zlab.ocov.tracker.Runtime.update(SwitchRpcThrottleStateData.newBuilder().setRpcThrottleEnabled(rpcThrottleEnabled).build(), 7, serializer)));
+    }
 
-  @Override
-  public boolean hasMetaTableRegion() {
-    return false;
-  }
+    @Override
+    protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        super.deserializeStateData(serializer);
+        SwitchRpcThrottleStateData data = serializer.deserialize(SwitchRpcThrottleStateData.class);
+        rpcThrottleEnabled = data.getRpcThrottleEnabled();
+    }
 
-  @Override
-  public ServerOperationType getServerOperationType() {
-    return ServerOperationType.SWITCH_RPC_THROTTLE;
-  }
+    @Override
+    public ServerName getServerName() {
+        return serverName;
+    }
 
-  public void switchThrottleState(MasterProcedureEnv env, boolean rpcThrottleEnabled)
-    throws IOException {
-    rpcThrottleStorage.switchRpcThrottle(rpcThrottleEnabled);
-  }
+    @Override
+    public boolean hasMetaTableRegion() {
+        return false;
+    }
 
-  @Override
-  public void toStringClassDetails(StringBuilder sb) {
-    sb.append(getClass().getSimpleName());
-    sb.append(" server=");
-    sb.append(serverName);
-    sb.append(", rpcThrottleEnabled=");
-    sb.append(rpcThrottleEnabled);
-  }
+    @Override
+    public ServerOperationType getServerOperationType() {
+        return ServerOperationType.SWITCH_RPC_THROTTLE;
+    }
+
+    public void switchThrottleState(MasterProcedureEnv env, boolean rpcThrottleEnabled) throws IOException {
+        rpcThrottleStorage.switchRpcThrottle(rpcThrottleEnabled);
+    }
+
+    @Override
+    public void toStringClassDetails(StringBuilder sb) {
+        sb.append(getClass().getSimpleName());
+        sb.append(" server=");
+        sb.append(serverName);
+        sb.append(", rpcThrottleEnabled=");
+        sb.append(rpcThrottleEnabled);
+    }
 }

@@ -27,7 +27,6 @@ import org.apache.hadoop.hbase.replication.ReplicationPeerConfig;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.RemovePeerStateData;
 
 /**
@@ -36,66 +35,65 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.R
 @InterfaceAudience.Private
 public class RemovePeerProcedure extends ModifyPeerProcedure {
 
-  private static final Logger LOG = LoggerFactory.getLogger(RemovePeerProcedure.class);
+    private static final Logger LOG = LoggerFactory.getLogger(RemovePeerProcedure.class);
 
-  private ReplicationPeerConfig peerConfig;
+    private ReplicationPeerConfig peerConfig;
 
-  public RemovePeerProcedure() {
-  }
-
-  public RemovePeerProcedure(String peerId) {
-    super(peerId);
-  }
-
-  @Override
-  public PeerOperationType getPeerOperationType() {
-    return PeerOperationType.REMOVE;
-  }
-
-  @Override
-  protected void prePeerModification(MasterProcedureEnv env) throws IOException {
-    MasterCoprocessorHost cpHost = env.getMasterCoprocessorHost();
-    if (cpHost != null) {
-      cpHost.preRemoveReplicationPeer(peerId);
+    public RemovePeerProcedure() {
     }
-    peerConfig = env.getReplicationPeerManager().preRemovePeer(peerId);
-  }
 
-  @Override
-  protected void updatePeerStorage(MasterProcedureEnv env) throws ReplicationException {
-    env.getReplicationPeerManager().removePeer(peerId);
-  }
+    public RemovePeerProcedure(String peerId) {
+        super(peerId);
+    }
 
-  @Override
-  protected void postPeerModification(MasterProcedureEnv env)
-    throws IOException, ReplicationException {
-    env.getReplicationPeerManager().removeAllQueuesAndHFileRefs(peerId);
-    if (peerConfig.isSerial()) {
-      env.getReplicationPeerManager().removeAllLastPushedSeqIds(peerId);
+    @Override
+    public PeerOperationType getPeerOperationType() {
+        return PeerOperationType.REMOVE;
     }
-    LOG.info("Successfully removed peer {}", peerId);
-    MasterCoprocessorHost cpHost = env.getMasterCoprocessorHost();
-    if (cpHost != null) {
-      cpHost.postRemoveReplicationPeer(peerId);
-    }
-  }
 
-  @Override
-  protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    super.serializeStateData(serializer);
-    RemovePeerStateData.Builder builder = RemovePeerStateData.newBuilder();
-    if (peerConfig != null) {
-      builder.setPeerConfig(ReplicationPeerConfigUtil.convert(peerConfig));
+    @Override
+    protected void prePeerModification(MasterProcedureEnv env) throws IOException {
+        MasterCoprocessorHost cpHost = env.getMasterCoprocessorHost();
+        if (cpHost != null) {
+            cpHost.preRemoveReplicationPeer(peerId);
+        }
+        peerConfig = env.getReplicationPeerManager().preRemovePeer(peerId);
     }
-    serializer.serialize(builder.build());
-  }
 
-  @Override
-  protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    super.deserializeStateData(serializer);
-    RemovePeerStateData data = serializer.deserialize(RemovePeerStateData.class);
-    if (data.hasPeerConfig()) {
-      this.peerConfig = ReplicationPeerConfigUtil.convert(data.getPeerConfig());
+    @Override
+    protected void updatePeerStorage(MasterProcedureEnv env) throws ReplicationException {
+        env.getReplicationPeerManager().removePeer(peerId);
     }
-  }
+
+    @Override
+    protected void postPeerModification(MasterProcedureEnv env) throws IOException, ReplicationException {
+        env.getReplicationPeerManager().removeAllQueuesAndHFileRefs(peerId);
+        if (peerConfig.isSerial()) {
+            env.getReplicationPeerManager().removeAllLastPushedSeqIds(peerId);
+        }
+        LOG.info("Successfully removed peer {}", peerId);
+        MasterCoprocessorHost cpHost = env.getMasterCoprocessorHost();
+        if (cpHost != null) {
+            cpHost.postRemoveReplicationPeer(peerId);
+        }
+    }
+
+    @Override
+    protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        super.serializeStateData(serializer);
+        RemovePeerStateData.Builder builder = RemovePeerStateData.newBuilder();
+        if (peerConfig != null) {
+            builder.setPeerConfig(ReplicationPeerConfigUtil.convert(peerConfig));
+        }
+        serializer.serialize(((org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.RemovePeerStateData) org.zlab.ocov.tracker.Runtime.update(builder.build(), 25, serializer)));
+    }
+
+    @Override
+    protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        super.deserializeStateData(serializer);
+        RemovePeerStateData data = serializer.deserialize(RemovePeerStateData.class);
+        if (data.hasPeerConfig()) {
+            this.peerConfig = ReplicationPeerConfigUtil.convert(data.getPeerConfig());
+        }
+    }
 }

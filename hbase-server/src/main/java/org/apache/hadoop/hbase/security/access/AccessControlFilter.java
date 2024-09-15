@@ -47,148 +47,149 @@ import org.apache.yetus.audience.InterfaceAudience;
 @InterfaceAudience.Private
 class AccessControlFilter extends FilterBase {
 
-  public static enum Strategy {
-    /** Filter only by checking the table or CF permissions */
-    CHECK_TABLE_AND_CF_ONLY,
-    /** Cell permissions can override table or CF permissions */
-    CHECK_CELL_DEFAULT,
-  };
+    public static enum Strategy {
 
-  private AuthManager authManager;
-  private TableName table;
-  private User user;
-  private boolean isSystemTable;
-  private Strategy strategy;
-  private Map<ByteRange, Integer> cfVsMaxVersions;
-  private int familyMaxVersions;
-  private int currentVersions;
-  private ByteRange prevFam;
-  private ByteRange prevQual;
-
-  /**
-   * For Writable
-   */
-  AccessControlFilter() {
-  }
-
-  AccessControlFilter(AuthManager mgr, User ugi, TableName tableName, Strategy strategy,
-    Map<ByteRange, Integer> cfVsMaxVersions) {
-    authManager = mgr;
-    table = tableName;
-    user = ugi;
-    isSystemTable = tableName.isSystemTable();
-    this.strategy = strategy;
-    this.cfVsMaxVersions = cfVsMaxVersions;
-    this.prevFam = new SimpleMutableByteRange();
-    this.prevQual = new SimpleMutableByteRange();
-  }
-
-  @Override
-  public boolean filterRowKey(Cell cell) throws IOException {
-    // Impl in FilterBase might do unnecessary copy for Off heap backed Cells.
-    return false;
-  }
-
-  @Override
-  public ReturnCode filterCell(final Cell cell) {
-    if (isSystemTable) {
-      return ReturnCode.INCLUDE;
+        /**
+         * Filter only by checking the table or CF permissions
+         */
+        CHECK_TABLE_AND_CF_ONLY,
+        /**
+         * Cell permissions can override table or CF permissions
+         */
+        CHECK_CELL_DEFAULT
     }
-    if (
-      prevFam.getBytes() == null || !(PrivateCellUtil.matchingFamily(cell, prevFam.getBytes(),
-        prevFam.getOffset(), prevFam.getLength()))
-    ) {
-      prevFam.set(cell.getFamilyArray(), cell.getFamilyOffset(), cell.getFamilyLength());
-      // Similar to VisibilityLabelFilter
-      familyMaxVersions = cfVsMaxVersions.get(prevFam);
-      // Family is changed. Just unset curQualifier.
-      prevQual.unset();
+
+    private AuthManager authManager;
+
+    private TableName table;
+
+    private User user;
+
+    private boolean isSystemTable;
+
+    private Strategy strategy;
+
+    private Map<ByteRange, Integer> cfVsMaxVersions;
+
+    private int familyMaxVersions;
+
+    private int currentVersions;
+
+    private ByteRange prevFam;
+
+    private ByteRange prevQual;
+
+    /**
+     * For Writable
+     */
+    AccessControlFilter() {
     }
-    if (
-      prevQual.getBytes() == null || !(PrivateCellUtil.matchingQualifier(cell, prevQual.getBytes(),
-        prevQual.getOffset(), prevQual.getLength()))
-    ) {
-      prevQual.set(cell.getQualifierArray(), cell.getQualifierOffset(), cell.getQualifierLength());
-      currentVersions = 0;
+
+    AccessControlFilter(AuthManager mgr, User ugi, TableName tableName, Strategy strategy, Map<ByteRange, Integer> cfVsMaxVersions) {
+        authManager = mgr;
+        table = tableName;
+        user = ugi;
+        isSystemTable = tableName.isSystemTable();
+        this.strategy = strategy;
+        this.cfVsMaxVersions = cfVsMaxVersions;
+        this.prevFam = new SimpleMutableByteRange();
+        this.prevQual = new SimpleMutableByteRange();
     }
-    currentVersions++;
-    if (currentVersions > familyMaxVersions) {
-      return ReturnCode.SKIP;
+
+    @Override
+    public boolean filterRowKey(Cell cell) throws IOException {
+        // Impl in FilterBase might do unnecessary copy for Off heap backed Cells.
+        return false;
     }
-    // XXX: Compare in place, don't clone
-    byte[] f = CellUtil.cloneFamily(cell);
-    byte[] q = CellUtil.cloneQualifier(cell);
-    switch (strategy) {
-      // Filter only by checking the table or CF permissions
-      case CHECK_TABLE_AND_CF_ONLY: {
-        if (authManager.authorizeUserTable(user, table, f, q, Permission.Action.READ)) {
-          return ReturnCode.INCLUDE;
+
+    @Override
+    public ReturnCode filterCell(final Cell cell) {
+        if (isSystemTable) {
+            return ReturnCode.INCLUDE;
         }
-      }
-        break;
-      // Cell permissions can override table or CF permissions
-      case CHECK_CELL_DEFAULT: {
-        if (
-          authManager.authorizeUserTable(user, table, f, q, Permission.Action.READ)
-            || authManager.authorizeCell(user, table, cell, Permission.Action.READ)
-        ) {
-          return ReturnCode.INCLUDE;
+        if (prevFam.getBytes() == null || !(PrivateCellUtil.matchingFamily(cell, prevFam.getBytes(), prevFam.getOffset(), prevFam.getLength()))) {
+            prevFam.set(cell.getFamilyArray(), cell.getFamilyOffset(), cell.getFamilyLength());
+            // Similar to VisibilityLabelFilter
+            familyMaxVersions = cfVsMaxVersions.get(prevFam);
+            // Family is changed. Just unset curQualifier.
+            prevQual.unset();
         }
-      }
-        break;
-      default:
-        throw new RuntimeException("Unhandled strategy " + strategy);
+        if (prevQual.getBytes() == null || !(PrivateCellUtil.matchingQualifier(cell, prevQual.getBytes(), prevQual.getOffset(), prevQual.getLength()))) {
+            prevQual.set(cell.getQualifierArray(), cell.getQualifierOffset(), cell.getQualifierLength());
+            currentVersions = 0;
+        }
+        currentVersions++;
+        if ((org.zlab.ocov.tracker.Runtime.updateBranch(currentVersions, familyMaxVersions, ">", 7))) {
+            return ReturnCode.SKIP;
+        }
+        // XXX: Compare in place, don't clone
+        byte[] f = CellUtil.cloneFamily(cell);
+        byte[] q = CellUtil.cloneQualifier(cell);
+        switch(strategy) {
+            // Filter only by checking the table or CF permissions
+            case CHECK_TABLE_AND_CF_ONLY:
+                {
+                    if (authManager.authorizeUserTable(user, table, f, q, Permission.Action.READ)) {
+                        return ReturnCode.INCLUDE;
+                    }
+                }
+                break;
+            // Cell permissions can override table or CF permissions
+            case CHECK_CELL_DEFAULT:
+                {
+                    if (authManager.authorizeUserTable(user, table, f, q, Permission.Action.READ) || authManager.authorizeCell(user, table, cell, Permission.Action.READ)) {
+                        return ReturnCode.INCLUDE;
+                    }
+                }
+                break;
+            default:
+                throw new RuntimeException("Unhandled strategy " + strategy);
+        }
+        return ReturnCode.SKIP;
     }
 
-    return ReturnCode.SKIP;
-  }
-
-  @Override
-  public void reset() throws IOException {
-    this.prevFam.unset();
-    this.prevQual.unset();
-    this.familyMaxVersions = 0;
-    this.currentVersions = 0;
-  }
-
-  /** Returns The filter serialized using pb */
-  @Override
-  public byte[] toByteArray() {
-    // no implementation, server-side use only
-    throw new UnsupportedOperationException(
-      "Serialization not supported.  Intended for server-side use only.");
-  }
-
-  /**
-   * @param pbBytes A pb serialized {@link AccessControlFilter} instance
-   * @return An instance of {@link AccessControlFilter} made from <code>bytes</code>
-   * @throws org.apache.hadoop.hbase.exceptions.DeserializationException
-   * @see #toByteArray()
-   */
-  public static AccessControlFilter parseFrom(final byte[] pbBytes)
-    throws DeserializationException {
-    // no implementation, server-side use only
-    throw new UnsupportedOperationException(
-      "Serialization not supported.  Intended for server-side use only.");
-  }
-
-  @Override
-  public boolean equals(Object obj) {
-    if (!(obj instanceof AccessControlFilter)) {
-      return false;
+    @Override
+    public void reset() throws IOException {
+        this.prevFam.unset();
+        this.prevQual.unset();
+        this.familyMaxVersions = 0;
+        this.currentVersions = 0;
     }
-    if (this == obj) {
-      return true;
-    }
-    AccessControlFilter f = (AccessControlFilter) obj;
-    return this.authManager.equals(f.authManager) && this.table.equals(f.table)
-      && this.user.equals(f.user) && this.strategy.equals(f.strategy)
-      && this.cfVsMaxVersions.equals(f.cfVsMaxVersions);
-  }
 
-  @Override
-  public int hashCode() {
-    return Objects.hash(this.authManager, this.table, this.strategy, this.user,
-      this.cfVsMaxVersions);
-  }
+    /**
+     * Returns The filter serialized using pb
+     */
+    @Override
+    public byte[] toByteArray() {
+        // no implementation, server-side use only
+        throw new UnsupportedOperationException("Serialization not supported.  Intended for server-side use only.");
+    }
+
+    /**
+     * @param pbBytes A pb serialized {@link AccessControlFilter} instance
+     * @return An instance of {@link AccessControlFilter} made from <code>bytes</code>
+     * @throws org.apache.hadoop.hbase.exceptions.DeserializationException
+     * @see #toByteArray()
+     */
+    public static AccessControlFilter parseFrom(final byte[] pbBytes) throws DeserializationException {
+        // no implementation, server-side use only
+        throw new UnsupportedOperationException("Serialization not supported.  Intended for server-side use only.");
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (!(obj instanceof AccessControlFilter)) {
+            return false;
+        }
+        if (this == obj) {
+            return true;
+        }
+        AccessControlFilter f = (AccessControlFilter) obj;
+        return this.authManager.equals(f.authManager) && this.table.equals(f.table) && this.user.equals(f.user) && this.strategy.equals(f.strategy) && this.cfVsMaxVersions.equals(f.cfVsMaxVersions);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(this.authManager, this.table, this.strategy, this.user, this.cfVsMaxVersions);
+    }
 }

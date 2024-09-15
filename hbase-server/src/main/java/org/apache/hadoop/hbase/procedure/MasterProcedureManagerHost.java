@@ -33,30 +33,30 @@ import org.apache.zookeeper.KeeperException;
 @InterfaceAudience.Private
 public class MasterProcedureManagerHost extends ProcedureManagerHost<MasterProcedureManager> {
 
-  private Hashtable<String, MasterProcedureManager> procedureMgrMap = new Hashtable<>();
+    private Hashtable<String, MasterProcedureManager> procedureMgrMap = new Hashtable<>();
 
-  @Override
-  public void loadProcedures(Configuration conf) {
-    loadUserProcedures(conf, MASTER_PROCEDURE_CONF_KEY);
-    for (MasterProcedureManager mpm : getProcedureManagers()) {
-      procedureMgrMap.put(mpm.getProcedureSignature(), mpm);
+    @Override
+    public void loadProcedures(Configuration conf) {
+        loadUserProcedures(conf, MASTER_PROCEDURE_CONF_KEY);
+        for (MasterProcedureManager mpm : getProcedureManagers()) {
+            procedureMgrMap.put(mpm.getProcedureSignature(), mpm);
+        }
     }
-  }
 
-  public void initialize(MasterServices master, final MetricsMaster metricsMaster)
-    throws KeeperException, IOException, UnsupportedOperationException {
-    for (MasterProcedureManager mpm : getProcedureManagers()) {
-      mpm.initialize(master, metricsMaster);
+    public void initialize(MasterServices master, final MetricsMaster metricsMaster) throws KeeperException, IOException, UnsupportedOperationException {
+        for (MasterProcedureManager mpm : getProcedureManagers()) {
+            mpm.initialize(master, metricsMaster);
+            org.zlab.ocov.tracker.Runtime.update(mpm, 180, master, metricsMaster);
+        }
     }
-  }
 
-  public void stop(String why) {
-    for (MasterProcedureManager mpm : getProcedureManagers()) {
-      mpm.stop(why);
+    public void stop(String why) {
+        for (MasterProcedureManager mpm : getProcedureManagers()) {
+            mpm.stop(why);
+        }
     }
-  }
 
-  public MasterProcedureManager getProcedureManager(String signature) {
-    return procedureMgrMap.get(signature);
-  }
+    public MasterProcedureManager getProcedureManager(String signature) {
+        return procedureMgrMap.get(signature);
+    }
 }

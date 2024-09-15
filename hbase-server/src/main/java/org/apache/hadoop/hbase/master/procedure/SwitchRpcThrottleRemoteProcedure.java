@@ -27,7 +27,6 @@ import org.apache.hadoop.hbase.util.ForeignExceptionUtil;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hadoop.hbase.shaded.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.ErrorHandlingProtos;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.SwitchRpcThrottleRemoteStateData;
@@ -36,98 +35,88 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.S
  * The procedure to switch rpc throttle on region server
  */
 @InterfaceAudience.Private
-public class SwitchRpcThrottleRemoteProcedure extends ServerRemoteProcedure
-  implements ServerProcedureInterface {
+public class SwitchRpcThrottleRemoteProcedure extends ServerRemoteProcedure implements ServerProcedureInterface {
 
-  private static final Logger LOG = LoggerFactory.getLogger(SwitchRpcThrottleRemoteProcedure.class);
-  private boolean rpcThrottleEnabled;
+    private static final Logger LOG = LoggerFactory.getLogger(SwitchRpcThrottleRemoteProcedure.class);
 
-  public SwitchRpcThrottleRemoteProcedure() {
-  }
+    private boolean rpcThrottleEnabled;
 
-  public SwitchRpcThrottleRemoteProcedure(ServerName serverName, boolean rpcThrottleEnabled) {
-    this.targetServer = serverName;
-    this.rpcThrottleEnabled = rpcThrottleEnabled;
-  }
-
-  @Override
-  protected void rollback(MasterProcedureEnv env) throws IOException, InterruptedException {
-  }
-
-  @Override
-  protected boolean abort(MasterProcedureEnv env) {
-    return false;
-  }
-
-  @Override
-  protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    SwitchRpcThrottleRemoteStateData.Builder builder =
-      SwitchRpcThrottleRemoteStateData.newBuilder();
-    builder.setTargetServer(ProtobufUtil.toServerName(targetServer))
-      .setRpcThrottleEnabled(rpcThrottleEnabled).setState(state).build();
-    if (this.remoteError != null) {
-      ErrorHandlingProtos.ForeignExceptionMessage fem =
-        ForeignExceptionUtil.toProtoForeignException(remoteError);
-      builder.setError(fem);
+    public SwitchRpcThrottleRemoteProcedure() {
     }
-    serializer.serialize(builder.build());
-  }
 
-  @Override
-  protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    SwitchRpcThrottleRemoteStateData data =
-      serializer.deserialize(SwitchRpcThrottleRemoteStateData.class);
-    targetServer = ProtobufUtil.toServerName(data.getTargetServer());
-    rpcThrottleEnabled = data.getRpcThrottleEnabled();
-    state = data.getState();
-    if (data.hasError()) {
-      this.remoteError = ForeignExceptionUtil.toException(data.getError());
+    public SwitchRpcThrottleRemoteProcedure(ServerName serverName, boolean rpcThrottleEnabled) {
+        this.targetServer = serverName;
+        this.rpcThrottleEnabled = rpcThrottleEnabled;
     }
-  }
 
-  @Override
-  public Optional<RemoteProcedureDispatcher.RemoteOperation>
-    remoteCallBuild(MasterProcedureEnv masterProcedureEnv, ServerName remote) {
-    assert targetServer.equals(remote);
-    return Optional.of(new RSProcedureDispatcher.ServerOperation(this, getProcId(),
-      SwitchRpcThrottleRemoteCallable.class,
-      SwitchRpcThrottleRemoteStateData.newBuilder()
-        .setTargetServer(ProtobufUtil.toServerName(remote))
-        .setRpcThrottleEnabled(rpcThrottleEnabled).build().toByteArray()));
-  }
-
-  @Override
-  public ServerName getServerName() {
-    return targetServer;
-  }
-
-  @Override
-  public boolean hasMetaTableRegion() {
-    return false;
-  }
-
-  @Override
-  public ServerOperationType getServerOperationType() {
-    return ServerOperationType.SWITCH_RPC_THROTTLE;
-  }
-
-  @Override
-  protected boolean complete(MasterProcedureEnv env, Throwable error) {
-    if (error != null) {
-      LOG.warn("Failed to switch rpc throttle to {} on server {}", rpcThrottleEnabled, targetServer,
-        error);
-      return false;
-    } else {
-      return true;
+    @Override
+    protected void rollback(MasterProcedureEnv env) throws IOException, InterruptedException {
     }
-  }
 
-  @Override
-  public void toStringClassDetails(StringBuilder sb) {
-    sb.append(getClass().getSimpleName());
-    sb.append(" server=");
-    sb.append(targetServer);
-    sb.append(", rpcThrottleEnabled=");
-    sb.append(rpcThrottleEnabled);
-  }
+    @Override
+    protected boolean abort(MasterProcedureEnv env) {
+        return false;
+    }
+
+    @Override
+    protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        SwitchRpcThrottleRemoteStateData.Builder builder = SwitchRpcThrottleRemoteStateData.newBuilder();
+        builder.setTargetServer(ProtobufUtil.toServerName(targetServer)).setRpcThrottleEnabled(rpcThrottleEnabled).setState(state).build();
+        if (this.remoteError != null) {
+            ErrorHandlingProtos.ForeignExceptionMessage fem = ForeignExceptionUtil.toProtoForeignException(remoteError);
+            builder.setError(fem);
+        }
+        serializer.serialize(((org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.SwitchRpcThrottleRemoteStateData) org.zlab.ocov.tracker.Runtime.update(builder.build(), 18, serializer)));
+    }
+
+    @Override
+    protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        SwitchRpcThrottleRemoteStateData data = serializer.deserialize(SwitchRpcThrottleRemoteStateData.class);
+        targetServer = ProtobufUtil.toServerName(data.getTargetServer());
+        rpcThrottleEnabled = data.getRpcThrottleEnabled();
+        state = data.getState();
+        if (data.hasError()) {
+            this.remoteError = ForeignExceptionUtil.toException(data.getError());
+        }
+    }
+
+    @Override
+    public Optional<RemoteProcedureDispatcher.RemoteOperation> remoteCallBuild(MasterProcedureEnv masterProcedureEnv, ServerName remote) {
+        assert targetServer.equals(remote);
+        return Optional.of(new RSProcedureDispatcher.ServerOperation(this, getProcId(), SwitchRpcThrottleRemoteCallable.class, SwitchRpcThrottleRemoteStateData.newBuilder().setTargetServer(ProtobufUtil.toServerName(remote)).setRpcThrottleEnabled(rpcThrottleEnabled).build().toByteArray()));
+    }
+
+    @Override
+    public ServerName getServerName() {
+        return targetServer;
+    }
+
+    @Override
+    public boolean hasMetaTableRegion() {
+        return false;
+    }
+
+    @Override
+    public ServerOperationType getServerOperationType() {
+        return ServerOperationType.SWITCH_RPC_THROTTLE;
+    }
+
+    @Override
+    protected boolean complete(MasterProcedureEnv env, Throwable error) {
+        if (error != null) {
+            LOG.warn("Failed to switch rpc throttle to {} on server {}", rpcThrottleEnabled, targetServer, error);
+            return false;
+        } else {
+            return true;
+        }
+    }
+
+    @Override
+    public void toStringClassDetails(StringBuilder sb) {
+        sb.append(getClass().getSimpleName());
+        sb.append(" server=");
+        sb.append(targetServer);
+        sb.append(", rpcThrottleEnabled=");
+        sb.append(rpcThrottleEnabled);
+    }
 }

@@ -50,9 +50,7 @@ import org.apache.hadoop.hbase.util.RetryCounter;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hbase.thirdparty.org.apache.commons.collections4.CollectionUtils;
-
 import org.apache.hadoop.hbase.shaded.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.HBaseProtos;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos;
@@ -61,357 +59,322 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.ProcedureProtos;
 
 @InterfaceAudience.Private
 public class DeleteTableProcedure extends AbstractStateMachineTableProcedure<DeleteTableState> {
-  private static final Logger LOG = LoggerFactory.getLogger(DeleteTableProcedure.class);
 
-  private List<RegionInfo> regions;
-  private TableName tableName;
-  private RetryCounter retryCounter;
+    private static final Logger LOG = LoggerFactory.getLogger(DeleteTableProcedure.class);
 
-  public DeleteTableProcedure() {
-    // Required by the Procedure framework to create the procedure on replay
-    super();
-  }
+    private List<RegionInfo> regions;
 
-  public DeleteTableProcedure(final MasterProcedureEnv env, final TableName tableName) {
-    this(env, tableName, null);
-  }
+    private TableName tableName;
 
-  public DeleteTableProcedure(final MasterProcedureEnv env, final TableName tableName,
-    final ProcedurePrepareLatch syncLatch) {
-    super(env, syncLatch);
-    this.tableName = tableName;
-  }
+    private RetryCounter retryCounter;
 
-  @Override
-  protected Flow executeFromState(final MasterProcedureEnv env, DeleteTableState state)
-    throws InterruptedException, ProcedureSuspendedException {
-    if (LOG.isTraceEnabled()) {
-      LOG.trace(this + " execute state=" + state);
+    public DeleteTableProcedure() {
+        // Required by the Procedure framework to create the procedure on replay
+        super();
     }
-    try {
-      switch (state) {
-        case DELETE_TABLE_PRE_OPERATION:
-          // Verify if we can delete the table
-          boolean deletable = prepareDelete(env);
-          releaseSyncLatch();
-          if (!deletable) {
-            assert isFailed() : "the delete should have an exception here";
-            return Flow.NO_MORE_STATE;
-          }
 
-          // TODO: Move out... in the acquireLock()
-          LOG.debug("Waiting for RIT for {}", this);
-          regions = env.getAssignmentManager().getRegionStates()
-            .getRegionsOfTableForDeleting(getTableName());
-          assert regions != null && !regions.isEmpty() : "unexpected 0 regions";
-          ProcedureSyncWait.waitRegionInTransition(env, regions);
+    public DeleteTableProcedure(final MasterProcedureEnv env, final TableName tableName) {
+        this(env, tableName, null);
+    }
 
-          // Call coprocessors
-          preDelete(env);
+    public DeleteTableProcedure(final MasterProcedureEnv env, final TableName tableName, final ProcedurePrepareLatch syncLatch) {
+        super(env, syncLatch);
+        this.tableName = tableName;
+    }
 
-          setNextState(DeleteTableState.DELETE_TABLE_CLEAR_FS_LAYOUT);
-          break;
-        case DELETE_TABLE_CLEAR_FS_LAYOUT:
-          LOG.debug("Deleting regions from filesystem for {}", this);
-          DeleteTableProcedure.deleteFromFs(env, getTableName(), regions, true);
-          setNextState(DeleteTableState.DELETE_TABLE_REMOVE_FROM_META);
-          break;
-        case DELETE_TABLE_REMOVE_FROM_META:
-          LOG.debug("Deleting regions from META for {}", this);
-          DeleteTableProcedure.deleteFromMeta(env, getTableName(), regions);
-          setNextState(DeleteTableState.DELETE_TABLE_UNASSIGN_REGIONS);
-          regions = null;
-          break;
-        case DELETE_TABLE_UNASSIGN_REGIONS:
-          LOG.debug("Deleting assignment state for {}", this);
-          DeleteTableProcedure.deleteAssignmentState(env, getTableName());
-          setNextState(DeleteTableState.DELETE_TABLE_POST_OPERATION);
-          break;
-        case DELETE_TABLE_POST_OPERATION:
-          postDelete(env);
-          retryCounter = null;
-          LOG.debug("Finished {}", this);
-          return Flow.NO_MORE_STATE;
-        default:
-          throw new UnsupportedOperationException("unhandled state=" + state);
-      }
-    } catch (IOException e) {
-      if (isRollbackSupported(state)) {
-        setFailure("master-delete-table", e);
-      } else {
-        if (retryCounter == null) {
-          retryCounter = ProcedureUtil.createRetryCounter(env.getMasterConfiguration());
+    @Override
+    protected Flow executeFromState(final MasterProcedureEnv env, DeleteTableState state) throws InterruptedException, ProcedureSuspendedException {
+        if (LOG.isTraceEnabled()) {
+            LOG.trace(this + " execute state=" + state);
         }
-        long backoff = retryCounter.getBackoffTimeAndIncrementAttempts();
-        LOG.warn("Retriable error trying to delete table={},state={},suspend {}secs.",
-          getTableName(), state, backoff / 1000, e);
-        throw suspend(Math.toIntExact(backoff), true);
-      }
+        try {
+            switch(state) {
+                case DELETE_TABLE_PRE_OPERATION:
+                    // Verify if we can delete the table
+                    boolean deletable = prepareDelete(env);
+                    releaseSyncLatch();
+                    if (!deletable) {
+                        assert isFailed() : "the delete should have an exception here";
+                        return Flow.NO_MORE_STATE;
+                    }
+                    // TODO: Move out... in the acquireLock()
+                    LOG.debug("Waiting for RIT for {}", this);
+                    regions = env.getAssignmentManager().getRegionStates().getRegionsOfTableForDeleting(getTableName());
+                    assert regions != null && !regions.isEmpty() : "unexpected 0 regions";
+                    ProcedureSyncWait.waitRegionInTransition(env, regions);
+                    // Call coprocessors
+                    preDelete(env);
+                    setNextState(DeleteTableState.DELETE_TABLE_CLEAR_FS_LAYOUT);
+                    break;
+                case DELETE_TABLE_CLEAR_FS_LAYOUT:
+                    LOG.debug("Deleting regions from filesystem for {}", this);
+                    DeleteTableProcedure.deleteFromFs(env, getTableName(), regions, true);
+                    setNextState(DeleteTableState.DELETE_TABLE_REMOVE_FROM_META);
+                    break;
+                case DELETE_TABLE_REMOVE_FROM_META:
+                    LOG.debug("Deleting regions from META for {}", this);
+                    DeleteTableProcedure.deleteFromMeta(env, getTableName(), regions);
+                    setNextState(DeleteTableState.DELETE_TABLE_UNASSIGN_REGIONS);
+                    regions = null;
+                    break;
+                case DELETE_TABLE_UNASSIGN_REGIONS:
+                    LOG.debug("Deleting assignment state for {}", this);
+                    DeleteTableProcedure.deleteAssignmentState(env, getTableName());
+                    setNextState(DeleteTableState.DELETE_TABLE_POST_OPERATION);
+                    break;
+                case DELETE_TABLE_POST_OPERATION:
+                    postDelete(env);
+                    retryCounter = null;
+                    LOG.debug("Finished {}", this);
+                    return Flow.NO_MORE_STATE;
+                default:
+                    throw new UnsupportedOperationException("unhandled state=" + state);
+            }
+        } catch (IOException e) {
+            if (isRollbackSupported(state)) {
+                setFailure("master-delete-table", e);
+            } else {
+                if (retryCounter == null) {
+                    retryCounter = ProcedureUtil.createRetryCounter(env.getMasterConfiguration());
+                }
+                long backoff = retryCounter.getBackoffTimeAndIncrementAttempts();
+                LOG.warn("Retriable error trying to delete table={},state={},suspend {}secs.", getTableName(), state, backoff / 1000, e);
+                throw suspend(Math.toIntExact(backoff), true);
+            }
+        }
+        retryCounter = null;
+        return Flow.HAS_MORE_STATE;
     }
-    retryCounter = null;
-    return Flow.HAS_MORE_STATE;
-  }
 
-  @Override
-  protected synchronized boolean setTimeoutFailure(MasterProcedureEnv env) {
-    setState(ProcedureProtos.ProcedureState.RUNNABLE);
-    env.getProcedureScheduler().addFront(this);
-    return false;
-  }
-
-  @Override
-  protected boolean abort(MasterProcedureEnv env) {
-    // TODO: Current behavior is: with no rollback and no abort support, procedure may get stuck
-    // looping in retrying failing a step forever. Default behavior of abort is changed to support
-    // aborting all procedures. Override the default wisely. Following code retains the current
-    // behavior. Revisit it later.
-    return isRollbackSupported(getCurrentState()) ? super.abort(env) : false;
-  }
-
-  @Override
-  protected void rollbackState(final MasterProcedureEnv env, final DeleteTableState state) {
-    if (state == DeleteTableState.DELETE_TABLE_PRE_OPERATION) {
-      // nothing to rollback, pre-delete is just table-state checks.
-      // We can fail if the table does not exist or is not disabled.
-      // TODO: coprocessor rollback semantic is still undefined.
-      releaseSyncLatch();
-      return;
-    }
-
-    // The delete doesn't have a rollback. The execution will succeed, at some point.
-    throw new UnsupportedOperationException("unhandled state=" + state);
-  }
-
-  @Override
-  protected boolean isRollbackSupported(final DeleteTableState state) {
-    switch (state) {
-      case DELETE_TABLE_PRE_OPERATION:
-        return true;
-      default:
+    @Override
+    protected synchronized boolean setTimeoutFailure(MasterProcedureEnv env) {
+        setState(ProcedureProtos.ProcedureState.RUNNABLE);
+        env.getProcedureScheduler().addFront(this);
         return false;
     }
-  }
 
-  @Override
-  protected DeleteTableState getState(final int stateId) {
-    return DeleteTableState.forNumber(stateId);
-  }
-
-  @Override
-  protected int getStateId(final DeleteTableState state) {
-    return state.getNumber();
-  }
-
-  @Override
-  protected DeleteTableState getInitialState() {
-    return DeleteTableState.DELETE_TABLE_PRE_OPERATION;
-  }
-
-  @Override
-  protected boolean holdLock(MasterProcedureEnv env) {
-    return true;
-  }
-
-  @Override
-  public TableName getTableName() {
-    return tableName;
-  }
-
-  @Override
-  public TableOperationType getTableOperationType() {
-    return TableOperationType.DELETE;
-  }
-
-  @Override
-  protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    super.serializeStateData(serializer);
-
-    MasterProcedureProtos.DeleteTableStateData.Builder state =
-      MasterProcedureProtos.DeleteTableStateData.newBuilder()
-        .setUserInfo(MasterProcedureUtil.toProtoUserInfo(getUser()))
-        .setTableName(ProtobufUtil.toProtoTableName(tableName));
-    if (regions != null) {
-      for (RegionInfo hri : regions) {
-        state.addRegionInfo(ProtobufUtil.toRegionInfo(hri));
-      }
+    @Override
+    protected boolean abort(MasterProcedureEnv env) {
+        // TODO: Current behavior is: with no rollback and no abort support, procedure may get stuck
+        // looping in retrying failing a step forever. Default behavior of abort is changed to support
+        // aborting all procedures. Override the default wisely. Following code retains the current
+        // behavior. Revisit it later.
+        return isRollbackSupported(getCurrentState()) ? super.abort(env) : false;
     }
-    serializer.serialize(state.build());
-  }
 
-  @Override
-  protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    super.deserializeStateData(serializer);
-
-    MasterProcedureProtos.DeleteTableStateData state =
-      serializer.deserialize(MasterProcedureProtos.DeleteTableStateData.class);
-    setUser(MasterProcedureUtil.toUserInfo(state.getUserInfo()));
-    tableName = ProtobufUtil.toTableName(state.getTableName());
-    if (state.getRegionInfoCount() == 0) {
-      regions = null;
-    } else {
-      regions = new ArrayList<>(state.getRegionInfoCount());
-      for (HBaseProtos.RegionInfo hri : state.getRegionInfoList()) {
-        regions.add(ProtobufUtil.toRegionInfo(hri));
-      }
+    @Override
+    protected void rollbackState(final MasterProcedureEnv env, final DeleteTableState state) {
+        if (state == DeleteTableState.DELETE_TABLE_PRE_OPERATION) {
+            // nothing to rollback, pre-delete is just table-state checks.
+            // We can fail if the table does not exist or is not disabled.
+            // TODO: coprocessor rollback semantic is still undefined.
+            releaseSyncLatch();
+            return;
+        }
+        // The delete doesn't have a rollback. The execution will succeed, at some point.
+        throw new UnsupportedOperationException("unhandled state=" + state);
     }
-  }
 
-  private boolean prepareDelete(final MasterProcedureEnv env) throws IOException {
-    try {
-      env.getMasterServices().checkTableModifiable(tableName);
-    } catch (TableNotFoundException | TableNotDisabledException e) {
-      setFailure("master-delete-table", e);
-      return false;
+    @Override
+    protected boolean isRollbackSupported(final DeleteTableState state) {
+        switch(state) {
+            case DELETE_TABLE_PRE_OPERATION:
+                return true;
+            default:
+                return false;
+        }
     }
-    return true;
-  }
 
-  private boolean preDelete(final MasterProcedureEnv env) throws IOException, InterruptedException {
-    final MasterCoprocessorHost cpHost = env.getMasterCoprocessorHost();
-    if (cpHost != null) {
-      final TableName tableName = this.tableName;
-      cpHost.preDeleteTableAction(tableName, getUser());
+    @Override
+    protected DeleteTableState getState(final int stateId) {
+        return DeleteTableState.forNumber(stateId);
     }
-    return true;
-  }
 
-  private void postDelete(final MasterProcedureEnv env) throws IOException, InterruptedException {
-    deleteTableStates(env, tableName);
-
-    final MasterCoprocessorHost cpHost = env.getMasterCoprocessorHost();
-    if (cpHost != null) {
-      final TableName tableName = this.tableName;
-      cpHost.postCompletedDeleteTableAction(tableName, getUser());
+    @Override
+    protected int getStateId(final DeleteTableState state) {
+        return state.getNumber();
     }
-  }
 
-  protected static void deleteFromFs(final MasterProcedureEnv env, final TableName tableName,
-    final List<RegionInfo> regions, final boolean archive) throws IOException {
-    final MasterFileSystem mfs = env.getMasterServices().getMasterFileSystem();
-    final FileSystem fs = mfs.getFileSystem();
+    @Override
+    protected DeleteTableState getInitialState() {
+        return DeleteTableState.DELETE_TABLE_PRE_OPERATION;
+    }
 
-    final Path tableDir = CommonFSUtils.getTableDir(mfs.getRootDir(), tableName);
+    @Override
+    protected boolean holdLock(MasterProcedureEnv env) {
+        return true;
+    }
 
-    if (fs.exists(tableDir)) {
-      // Archive regions from FS (temp directory)
-      if (archive) {
-        List<Path> regionDirList = new ArrayList<>();
-        for (RegionInfo region : regions) {
-          if (RegionReplicaUtil.isDefaultReplica(region)) {
-            regionDirList.add(FSUtils.getRegionDirFromTableDir(tableDir, region));
-            List<RegionInfo> mergeRegions =
-              MetaTableAccessor.getMergeRegions(env.getMasterServices().getConnection(), region);
-            if (!CollectionUtils.isEmpty(mergeRegions)) {
-              mergeRegions.stream()
-                .forEach(r -> regionDirList.add(FSUtils.getRegionDirFromTableDir(tableDir, r)));
+    @Override
+    public TableName getTableName() {
+        return tableName;
+    }
+
+    @Override
+    public TableOperationType getTableOperationType() {
+        return TableOperationType.DELETE;
+    }
+
+    @Override
+    protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        super.serializeStateData(serializer);
+        MasterProcedureProtos.DeleteTableStateData.Builder state = MasterProcedureProtos.DeleteTableStateData.newBuilder().setUserInfo(MasterProcedureUtil.toProtoUserInfo(getUser())).setTableName(ProtobufUtil.toProtoTableName(tableName));
+        if (regions != null) {
+            for (RegionInfo hri : regions) {
+                state.addRegionInfo(ProtobufUtil.toRegionInfo(hri));
             }
-          }
         }
-        HFileArchiver.archiveRegions(env.getMasterConfiguration(), fs, mfs.getRootDir(), tableDir,
-          regionDirList);
-        if (!regionDirList.isEmpty()) {
-          LOG.debug("Archived {} regions", tableName);
-        }
-      }
-
-      // Archive mob data
-      Path mobTableDir =
-        CommonFSUtils.getTableDir(new Path(mfs.getRootDir(), MobConstants.MOB_DIR_NAME), tableName);
-      Path regionDir = new Path(mobTableDir, MobUtils.getMobRegionInfo(tableName).getEncodedName());
-      if (fs.exists(regionDir)) {
-        HFileArchiver.archiveRegion(fs, mfs.getRootDir(), mobTableDir, regionDir);
-      }
-
-      // Delete table directory from FS
-      if (!fs.delete(tableDir, true) && fs.exists(tableDir)) {
-        throw new IOException("Couldn't delete " + tableDir);
-      }
-
-      // Delete the table directory where the mob files are saved
-      if (mobTableDir != null && fs.exists(mobTableDir)) {
-        if (!fs.delete(mobTableDir, true)) {
-          throw new IOException("Couldn't delete mob dir " + mobTableDir);
-        }
-      }
-
-      // Delete the directory on wal filesystem
-      FileSystem walFs = mfs.getWALFileSystem();
-      Path tableWALDir = CommonFSUtils.getWALTableDir(env.getMasterConfiguration(), tableName);
-      if (walFs.exists(tableWALDir) && !walFs.delete(tableWALDir, true)) {
-        throw new IOException("Couldn't delete table dir on wal filesystem" + tableWALDir);
-      }
-    }
-  }
-
-  /**
-   * There may be items for this table still up in hbase:meta in the case where the info:regioninfo
-   * column was empty because of some write error. Remove ALL rows from hbase:meta that have to do
-   * with this table.
-   * <p/>
-   * See HBASE-12980.
-   */
-  private static void cleanRegionsInMeta(final MasterProcedureEnv env, final TableName tableName)
-    throws IOException {
-    Scan tableScan = MetaTableAccessor.getScanForTableName(env.getMasterConfiguration(), tableName)
-      .setFilter(new KeyOnlyFilter());
-    long now = EnvironmentEdgeManager.currentTime();
-    List<Delete> deletes = new ArrayList<>();
-    try (
-      Table metaTable = env.getMasterServices().getConnection().getTable(TableName.META_TABLE_NAME);
-      ResultScanner scanner = metaTable.getScanner(tableScan)) {
-      for (;;) {
-        Result result = scanner.next();
-        if (result == null) {
-          break;
-        }
-        deletes.add(new Delete(result.getRow(), now));
-      }
-      if (!deletes.isEmpty()) {
-        LOG.warn("Deleting some vestigial " + deletes.size() + " rows of " + tableName + " from "
-          + TableName.META_TABLE_NAME);
-        metaTable.delete(deletes);
-      }
-    }
-  }
-
-  protected static void deleteFromMeta(final MasterProcedureEnv env, final TableName tableName,
-    List<RegionInfo> regions) throws IOException {
-    // Clean any remaining rows for this table.
-    cleanRegionsInMeta(env, tableName);
-
-    // clean region references from the server manager
-    env.getMasterServices().getServerManager().removeRegions(regions);
-
-    // Clear Favored Nodes for this table
-    FavoredNodesManager fnm = env.getMasterServices().getFavoredNodesManager();
-    if (fnm != null) {
-      fnm.deleteFavoredNodesForRegions(regions);
+        serializer.serialize(((org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.DeleteTableStateData) org.zlab.ocov.tracker.Runtime.update(state.build(), 3, serializer)));
     }
 
-    deleteTableDescriptorCache(env, tableName);
-  }
-
-  protected static void deleteAssignmentState(final MasterProcedureEnv env,
-    final TableName tableName) throws IOException {
-    // Clean up regions of the table in RegionStates.
-    LOG.debug("Removing '" + tableName + "' from region states.");
-    env.getMasterServices().getAssignmentManager().deleteTable(tableName);
-
-    // If entry for this table states, remove it.
-    LOG.debug("Marking '" + tableName + "' as deleted.");
-    env.getMasterServices().getTableStateManager().setDeletedTable(tableName);
-  }
-
-  protected static void deleteTableDescriptorCache(final MasterProcedureEnv env,
-    final TableName tableName) throws IOException {
-    LOG.debug("Removing '" + tableName + "' descriptor.");
-    env.getMasterServices().getTableDescriptors().remove(tableName);
-  }
-
-  protected static void deleteTableStates(final MasterProcedureEnv env, final TableName tableName)
-    throws IOException {
-    if (!tableName.isSystemTable()) {
-      ProcedureSyncWait.getMasterQuotaManager(env).removeTableFromNamespaceQuota(tableName);
+    @Override
+    protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        super.deserializeStateData(serializer);
+        MasterProcedureProtos.DeleteTableStateData state = serializer.deserialize(MasterProcedureProtos.DeleteTableStateData.class);
+        setUser(MasterProcedureUtil.toUserInfo(state.getUserInfo()));
+        tableName = ProtobufUtil.toTableName(state.getTableName());
+        if (state.getRegionInfoCount() == 0) {
+            regions = null;
+        } else {
+            regions = new ArrayList<>(state.getRegionInfoCount());
+            for (HBaseProtos.RegionInfo hri : state.getRegionInfoList()) {
+                regions.add(ProtobufUtil.toRegionInfo(hri));
+            }
+        }
     }
-  }
+
+    private boolean prepareDelete(final MasterProcedureEnv env) throws IOException {
+        try {
+            env.getMasterServices().checkTableModifiable(tableName);
+        } catch (TableNotFoundException | TableNotDisabledException e) {
+            setFailure("master-delete-table", e);
+            return false;
+        }
+        return true;
+    }
+
+    private boolean preDelete(final MasterProcedureEnv env) throws IOException, InterruptedException {
+        final MasterCoprocessorHost cpHost = env.getMasterCoprocessorHost();
+        if (cpHost != null) {
+            final TableName tableName = this.tableName;
+            cpHost.preDeleteTableAction(tableName, getUser());
+        }
+        return true;
+    }
+
+    private void postDelete(final MasterProcedureEnv env) throws IOException, InterruptedException {
+        deleteTableStates(env, tableName);
+        final MasterCoprocessorHost cpHost = env.getMasterCoprocessorHost();
+        if (cpHost != null) {
+            final TableName tableName = this.tableName;
+            cpHost.postCompletedDeleteTableAction(tableName, getUser());
+        }
+    }
+
+    protected static void deleteFromFs(final MasterProcedureEnv env, final TableName tableName, final List<RegionInfo> regions, final boolean archive) throws IOException {
+        final MasterFileSystem mfs = env.getMasterServices().getMasterFileSystem();
+        final FileSystem fs = mfs.getFileSystem();
+        final Path tableDir = CommonFSUtils.getTableDir(mfs.getRootDir(), tableName);
+        if (fs.exists(tableDir)) {
+            // Archive regions from FS (temp directory)
+            if (archive) {
+                List<Path> regionDirList = new ArrayList<>();
+                for (RegionInfo region : regions) {
+                    if (RegionReplicaUtil.isDefaultReplica(region)) {
+                        regionDirList.add(FSUtils.getRegionDirFromTableDir(tableDir, region));
+                        List<RegionInfo> mergeRegions = MetaTableAccessor.getMergeRegions(env.getMasterServices().getConnection(), region);
+                        if (!CollectionUtils.isEmpty(mergeRegions)) {
+                            mergeRegions.stream().forEach(r -> regionDirList.add(FSUtils.getRegionDirFromTableDir(tableDir, r)));
+                        }
+                    }
+                }
+                HFileArchiver.archiveRegions(env.getMasterConfiguration(), fs, mfs.getRootDir(), tableDir, regionDirList);
+                if (!regionDirList.isEmpty()) {
+                    LOG.debug("Archived {} regions", tableName);
+                }
+            }
+            // Archive mob data
+            Path mobTableDir = CommonFSUtils.getTableDir(new Path(mfs.getRootDir(), MobConstants.MOB_DIR_NAME), tableName);
+            Path regionDir = new Path(mobTableDir, MobUtils.getMobRegionInfo(tableName).getEncodedName());
+            if (fs.exists(regionDir)) {
+                HFileArchiver.archiveRegion(fs, mfs.getRootDir(), mobTableDir, regionDir);
+            }
+            // Delete table directory from FS
+            if (!fs.delete(tableDir, true) && fs.exists(tableDir)) {
+                throw new IOException("Couldn't delete " + tableDir);
+            }
+            // Delete the table directory where the mob files are saved
+            if (mobTableDir != null && fs.exists(mobTableDir)) {
+                if (!fs.delete(mobTableDir, true)) {
+                    throw new IOException("Couldn't delete mob dir " + mobTableDir);
+                }
+            }
+            // Delete the directory on wal filesystem
+            FileSystem walFs = mfs.getWALFileSystem();
+            Path tableWALDir = CommonFSUtils.getWALTableDir(env.getMasterConfiguration(), tableName);
+            if (walFs.exists(tableWALDir) && !walFs.delete(tableWALDir, true)) {
+                throw new IOException("Couldn't delete table dir on wal filesystem" + tableWALDir);
+            }
+        }
+    }
+
+    /**
+     * There may be items for this table still up in hbase:meta in the case where the info:regioninfo
+     * column was empty because of some write error. Remove ALL rows from hbase:meta that have to do
+     * with this table.
+     * <p/>
+     * See HBASE-12980.
+     */
+    private static void cleanRegionsInMeta(final MasterProcedureEnv env, final TableName tableName) throws IOException {
+        Scan tableScan = MetaTableAccessor.getScanForTableName(env.getMasterConfiguration(), tableName).setFilter(new KeyOnlyFilter());
+        long now = EnvironmentEdgeManager.currentTime();
+        List<Delete> deletes = new ArrayList<>();
+        try (Table metaTable = env.getMasterServices().getConnection().getTable(TableName.META_TABLE_NAME);
+            ResultScanner scanner = metaTable.getScanner(tableScan)) {
+            for (; ; ) {
+                Result result = scanner.next();
+                if (result == null) {
+                    break;
+                }
+                deletes.add(new Delete(result.getRow(), now));
+            }
+            if (!deletes.isEmpty()) {
+                LOG.warn("Deleting some vestigial " + deletes.size() + " rows of " + tableName + " from " + TableName.META_TABLE_NAME);
+                metaTable.delete(deletes);
+            }
+        }
+    }
+
+    protected static void deleteFromMeta(final MasterProcedureEnv env, final TableName tableName, List<RegionInfo> regions) throws IOException {
+        // Clean any remaining rows for this table.
+        cleanRegionsInMeta(env, tableName);
+        // clean region references from the server manager
+        env.getMasterServices().getServerManager().removeRegions(regions);
+        // Clear Favored Nodes for this table
+        FavoredNodesManager fnm = env.getMasterServices().getFavoredNodesManager();
+        if (fnm != null) {
+            fnm.deleteFavoredNodesForRegions(regions);
+        }
+        deleteTableDescriptorCache(env, tableName);
+    }
+
+    protected static void deleteAssignmentState(final MasterProcedureEnv env, final TableName tableName) throws IOException {
+        // Clean up regions of the table in RegionStates.
+        LOG.debug("Removing '" + tableName + "' from region states.");
+        env.getMasterServices().getAssignmentManager().deleteTable(tableName);
+        // If entry for this table states, remove it.
+        LOG.debug("Marking '" + tableName + "' as deleted.");
+        env.getMasterServices().getTableStateManager().setDeletedTable(tableName);
+    }
+
+    protected static void deleteTableDescriptorCache(final MasterProcedureEnv env, final TableName tableName) throws IOException {
+        LOG.debug("Removing '" + tableName + "' descriptor.");
+        env.getMasterServices().getTableDescriptors().remove(tableName);
+    }
+
+    protected static void deleteTableStates(final MasterProcedureEnv env, final TableName tableName) throws IOException {
+        if (!tableName.isSystemTable()) {
+            ProcedureSyncWait.getMasterQuotaManager(env).removeTableFromNamespaceQuota(tableName);
+        }
+    }
 }

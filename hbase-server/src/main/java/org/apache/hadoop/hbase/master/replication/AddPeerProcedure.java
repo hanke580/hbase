@@ -27,7 +27,6 @@ import org.apache.hadoop.hbase.replication.ReplicationPeerConfig;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.AddPeerStateData;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.PeerModificationState;
 
@@ -37,88 +36,80 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.P
 @InterfaceAudience.Private
 public class AddPeerProcedure extends ModifyPeerProcedure {
 
-  private static final Logger LOG = LoggerFactory.getLogger(AddPeerProcedure.class);
+    private static final Logger LOG = LoggerFactory.getLogger(AddPeerProcedure.class);
 
-  private ReplicationPeerConfig peerConfig;
+    private ReplicationPeerConfig peerConfig;
 
-  private boolean enabled;
+    private boolean enabled;
 
-  public AddPeerProcedure() {
-  }
-
-  public AddPeerProcedure(String peerId, ReplicationPeerConfig peerConfig, boolean enabled) {
-    super(peerId);
-    this.peerConfig = peerConfig;
-    this.enabled = enabled;
-  }
-
-  @Override
-  public PeerOperationType getPeerOperationType() {
-    return PeerOperationType.ADD;
-  }
-
-  @Override
-  protected PeerModificationState nextStateAfterRefresh() {
-    return peerConfig.isSerial()
-      ? PeerModificationState.SERIAL_PEER_REOPEN_REGIONS
-      : super.nextStateAfterRefresh();
-  }
-
-  @Override
-  protected void updateLastPushedSequenceIdForSerialPeer(MasterProcedureEnv env)
-    throws IOException, ReplicationException {
-    setLastPushedSequenceId(env, peerConfig);
-  }
-
-  @Override
-  protected boolean enablePeerBeforeFinish() {
-    return enabled;
-  }
-
-  @Override
-  protected ReplicationPeerConfig getNewPeerConfig() {
-    return peerConfig;
-  }
-
-  @Override
-  protected void prePeerModification(MasterProcedureEnv env)
-    throws IOException, ReplicationException {
-    MasterCoprocessorHost cpHost = env.getMasterCoprocessorHost();
-    if (cpHost != null) {
-      cpHost.preAddReplicationPeer(peerId, peerConfig);
+    public AddPeerProcedure() {
     }
-    env.getReplicationPeerManager().preAddPeer(peerId, peerConfig);
-  }
 
-  @Override
-  protected void updatePeerStorage(MasterProcedureEnv env) throws ReplicationException {
-    env.getReplicationPeerManager().addPeer(peerId, peerConfig,
-      peerConfig.isSerial() ? false : enabled);
-  }
-
-  @Override
-  protected void postPeerModification(MasterProcedureEnv env)
-    throws IOException, ReplicationException {
-    LOG.info("Successfully added {} peer {}, config {}", enabled ? "ENABLED" : "DISABLED", peerId,
-      peerConfig);
-    MasterCoprocessorHost cpHost = env.getMasterCoprocessorHost();
-    if (cpHost != null) {
-      env.getMasterCoprocessorHost().postAddReplicationPeer(peerId, peerConfig);
+    public AddPeerProcedure(String peerId, ReplicationPeerConfig peerConfig, boolean enabled) {
+        super(peerId);
+        this.peerConfig = peerConfig;
+        this.enabled = enabled;
     }
-  }
 
-  @Override
-  protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    super.serializeStateData(serializer);
-    serializer.serialize(AddPeerStateData.newBuilder()
-      .setPeerConfig(ReplicationPeerConfigUtil.convert(peerConfig)).setEnabled(enabled).build());
-  }
+    @Override
+    public PeerOperationType getPeerOperationType() {
+        return PeerOperationType.ADD;
+    }
 
-  @Override
-  protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    super.deserializeStateData(serializer);
-    AddPeerStateData data = serializer.deserialize(AddPeerStateData.class);
-    peerConfig = ReplicationPeerConfigUtil.convert(data.getPeerConfig());
-    enabled = data.getEnabled();
-  }
+    @Override
+    protected PeerModificationState nextStateAfterRefresh() {
+        return peerConfig.isSerial() ? PeerModificationState.SERIAL_PEER_REOPEN_REGIONS : super.nextStateAfterRefresh();
+    }
+
+    @Override
+    protected void updateLastPushedSequenceIdForSerialPeer(MasterProcedureEnv env) throws IOException, ReplicationException {
+        setLastPushedSequenceId(env, peerConfig);
+    }
+
+    @Override
+    protected boolean enablePeerBeforeFinish() {
+        return enabled;
+    }
+
+    @Override
+    protected ReplicationPeerConfig getNewPeerConfig() {
+        return peerConfig;
+    }
+
+    @Override
+    protected void prePeerModification(MasterProcedureEnv env) throws IOException, ReplicationException {
+        MasterCoprocessorHost cpHost = env.getMasterCoprocessorHost();
+        if (cpHost != null) {
+            cpHost.preAddReplicationPeer(peerId, peerConfig);
+        }
+        env.getReplicationPeerManager().preAddPeer(peerId, peerConfig);
+    }
+
+    @Override
+    protected void updatePeerStorage(MasterProcedureEnv env) throws ReplicationException {
+        env.getReplicationPeerManager().addPeer(peerId, peerConfig, peerConfig.isSerial() ? false : enabled);
+    }
+
+    @Override
+    protected void postPeerModification(MasterProcedureEnv env) throws IOException, ReplicationException {
+        LOG.info("Successfully added {} peer {}, config {}", enabled ? "ENABLED" : "DISABLED", peerId, peerConfig);
+        MasterCoprocessorHost cpHost = env.getMasterCoprocessorHost();
+        if (cpHost != null) {
+            env.getMasterCoprocessorHost().postAddReplicationPeer(peerId, peerConfig);
+        }
+    }
+
+    @Override
+    protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        super.serializeStateData(serializer);
+        serializer.serialize(((org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.AddPeerStateData) org.zlab.ocov.tracker.Runtime.update(AddPeerStateData.newBuilder().setPeerConfig(ReplicationPeerConfigUtil.convert(peerConfig)).setEnabled(enabled).build(), 36, serializer)));
+    }
+
+    @Override
+    protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        super.deserializeStateData(serializer);
+        AddPeerStateData data = serializer.deserialize(AddPeerStateData.class);
+        peerConfig = ReplicationPeerConfigUtil.convert(data.getPeerConfig());
+        enabled = data.getEnabled();
+    }
 }

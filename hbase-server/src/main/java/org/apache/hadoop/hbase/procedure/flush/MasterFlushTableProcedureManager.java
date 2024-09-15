@@ -47,164 +47,149 @@ import org.apache.yetus.audience.InterfaceAudience;
 import org.apache.zookeeper.KeeperException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hbase.thirdparty.com.google.common.collect.Lists;
-
 import org.apache.hadoop.hbase.shaded.protobuf.generated.HBaseProtos;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.HBaseProtos.ProcedureDescription;
 
 @InterfaceAudience.LimitedPrivate(HBaseInterfaceAudience.CONFIG)
 public class MasterFlushTableProcedureManager extends MasterProcedureManager {
 
-  public static final String FLUSH_TABLE_PROCEDURE_SIGNATURE = "flush-table-proc";
+    public static final String FLUSH_TABLE_PROCEDURE_SIGNATURE = "flush-table-proc";
 
-  private static final String FLUSH_TIMEOUT_MILLIS_KEY = "hbase.flush.master.timeoutMillis";
-  private static final int FLUSH_TIMEOUT_MILLIS_DEFAULT = 60000;
-  private static final String FLUSH_WAKE_MILLIS_KEY = "hbase.flush.master.wakeMillis";
-  private static final int FLUSH_WAKE_MILLIS_DEFAULT = 500;
+    private static final String FLUSH_TIMEOUT_MILLIS_KEY = "hbase.flush.master.timeoutMillis";
 
-  private static final String FLUSH_PROC_POOL_THREADS_KEY = "hbase.flush.procedure.master.threads";
-  private static final int FLUSH_PROC_POOL_THREADS_DEFAULT = 1;
+    private static final int FLUSH_TIMEOUT_MILLIS_DEFAULT = 60000;
 
-  private static final Logger LOG = LoggerFactory.getLogger(MasterFlushTableProcedureManager.class);
+    private static final String FLUSH_WAKE_MILLIS_KEY = "hbase.flush.master.wakeMillis";
 
-  private MasterServices master;
-  private ProcedureCoordinator coordinator;
-  private Map<TableName, Procedure> procMap = new HashMap<>();
-  private boolean stopped;
+    private static final int FLUSH_WAKE_MILLIS_DEFAULT = 500;
 
-  public MasterFlushTableProcedureManager() {
-  };
+    private static final String FLUSH_PROC_POOL_THREADS_KEY = "hbase.flush.procedure.master.threads";
 
-  @Override
-  public void stop(String why) {
-    LOG.info("stop: " + why);
-    this.stopped = true;
-  }
+    private static final int FLUSH_PROC_POOL_THREADS_DEFAULT = 1;
 
-  @Override
-  public boolean isStopped() {
-    return this.stopped;
-  }
+    private static final Logger LOG = LoggerFactory.getLogger(MasterFlushTableProcedureManager.class);
 
-  @Override
-  public void initialize(MasterServices master, MetricsMaster metricsMaster)
-    throws KeeperException, IOException, UnsupportedOperationException {
-    this.master = master;
+    private MasterServices master;
 
-    // get the configuration for the coordinator
-    Configuration conf = master.getConfiguration();
-    long wakeFrequency = conf.getInt(FLUSH_WAKE_MILLIS_KEY, FLUSH_WAKE_MILLIS_DEFAULT);
-    long timeoutMillis = conf.getLong(FLUSH_TIMEOUT_MILLIS_KEY, FLUSH_TIMEOUT_MILLIS_DEFAULT);
-    int threads = conf.getInt(FLUSH_PROC_POOL_THREADS_KEY, FLUSH_PROC_POOL_THREADS_DEFAULT);
+    private ProcedureCoordinator coordinator;
 
-    // setup the procedure coordinator
-    String name = master.getServerName().toString();
-    ThreadPoolExecutor tpool = ProcedureCoordinator.defaultPool(name, threads);
-    ProcedureCoordinatorRpcs comms =
-      new ZKProcedureCoordinator(master.getZooKeeper(), getProcedureSignature(), name);
+    private Map<TableName, Procedure> procMap = new HashMap<>();
 
-    this.coordinator = new ProcedureCoordinator(comms, tpool, timeoutMillis, wakeFrequency);
-  }
+    private boolean stopped;
 
-  @Override
-  public String getProcedureSignature() {
-    return FLUSH_TABLE_PROCEDURE_SIGNATURE;
-  }
-
-  @Override
-  public void execProcedure(ProcedureDescription desc) throws IOException {
-
-    TableName tableName = TableName.valueOf(desc.getInstance());
-
-    // call pre coproc hook
-    MasterCoprocessorHost cpHost = master.getMasterCoprocessorHost();
-    if (cpHost != null) {
-      cpHost.preTableFlush(tableName);
+    public MasterFlushTableProcedureManager() {
     }
 
-    // Get the list of region servers that host the online regions for table.
-    // We use the procedure instance name to carry the table name from the client.
-    // It is possible that regions may move after we get the region server list.
-    // Each region server will get its own online regions for the table.
-    // We may still miss regions that need to be flushed.
-    List<Pair<RegionInfo, ServerName>> regionsAndLocations =
-      master.getAssignmentManager().getTableRegionsAndLocations(tableName, false);
-
-    Set<String> regionServers = new HashSet<>(regionsAndLocations.size());
-    for (Pair<RegionInfo, ServerName> region : regionsAndLocations) {
-      if (region != null && region.getFirst() != null && region.getSecond() != null) {
-        RegionInfo hri = region.getFirst();
-        if (hri.isOffline() && (hri.isSplit() || hri.isSplitParent())) continue;
-        regionServers.add(region.getSecond().toString());
-      }
+    @Override
+    public void stop(String why) {
+        LOG.info("stop: " + why);
+        this.stopped = true;
     }
 
-    ForeignExceptionDispatcher monitor = new ForeignExceptionDispatcher(desc.getInstance());
-
-    HBaseProtos.NameStringPair family = null;
-    for (HBaseProtos.NameStringPair nsp : desc.getConfigurationList()) {
-      if (HConstants.FAMILY_KEY_STR.equals(nsp.getName())) {
-        family = nsp;
-      }
-    }
-    byte[] procArgs = family != null ? family.toByteArray() : new byte[0];
-
-    // Kick of the global procedure from the master coordinator to the region servers.
-    // We rely on the existing Distributed Procedure framework to prevent any concurrent
-    // procedure with the same name.
-    Procedure proc = coordinator.startProcedure(monitor, desc.getInstance(), procArgs,
-      Lists.newArrayList(regionServers));
-    monitor.rethrowException();
-    if (proc == null) {
-      String msg = "Failed to submit distributed procedure " + desc.getSignature() + " for '"
-        + desc.getInstance() + "'. " + "Another flush procedure is running?";
-      LOG.error(msg);
-      throw new IOException(msg);
+    @Override
+    public boolean isStopped() {
+        return this.stopped;
     }
 
-    procMap.put(tableName, proc);
-
-    try {
-      // wait for the procedure to complete. A timer thread is kicked off that should cancel this
-      // if it takes too long.
-      proc.waitForCompleted();
-      LOG.info("Done waiting - exec procedure " + desc.getSignature() + " for '"
-        + desc.getInstance() + "'");
-      LOG.info("Master flush table procedure is successful!");
-    } catch (InterruptedException e) {
-      ForeignException ee =
-        new ForeignException("Interrupted while waiting for flush table procdure to finish", e);
-      monitor.receive(ee);
-      Thread.currentThread().interrupt();
-    } catch (ForeignException e) {
-      ForeignException ee =
-        new ForeignException("Exception while waiting for flush table procdure to finish", e);
-      monitor.receive(ee);
+    @Override
+    public void initialize(MasterServices master, MetricsMaster metricsMaster) throws KeeperException, IOException, UnsupportedOperationException {
+        this.master = master;
+        org.zlab.ocov.tracker.Runtime.update(this, 179, master, metricsMaster);
+        // get the configuration for the coordinator
+        Configuration conf = master.getConfiguration();
+        long wakeFrequency = conf.getInt(FLUSH_WAKE_MILLIS_KEY, FLUSH_WAKE_MILLIS_DEFAULT);
+        long timeoutMillis = conf.getLong(FLUSH_TIMEOUT_MILLIS_KEY, FLUSH_TIMEOUT_MILLIS_DEFAULT);
+        int threads = conf.getInt(FLUSH_PROC_POOL_THREADS_KEY, FLUSH_PROC_POOL_THREADS_DEFAULT);
+        // setup the procedure coordinator
+        String name = master.getServerName().toString();
+        ThreadPoolExecutor tpool = ProcedureCoordinator.defaultPool(name, threads);
+        ProcedureCoordinatorRpcs comms = new ZKProcedureCoordinator(master.getZooKeeper(), getProcedureSignature(), name);
+        this.coordinator = new ProcedureCoordinator(comms, tpool, timeoutMillis, wakeFrequency);
     }
-    monitor.rethrowException();
-  }
 
-  @Override
-  public void checkPermissions(ProcedureDescription desc, AccessChecker accessChecker, User user)
-    throws IOException {
-    // Done by AccessController as part of preTableFlush coprocessor hook (legacy code path).
-    // In future, when we AC is removed for good, that check should be moved here.
-  }
-
-  @Override
-  public synchronized boolean isProcedureDone(ProcedureDescription desc) throws IOException {
-    // Procedure instance name is the table name.
-    TableName tableName = TableName.valueOf(desc.getInstance());
-    Procedure proc = procMap.get(tableName);
-    if (proc == null) {
-      // The procedure has not even been started yet.
-      // The client would request the procedure and call isProcedureDone().
-      // The HBaseAdmin.execProcedure() wraps both request and isProcedureDone().
-      return false;
+    @Override
+    public String getProcedureSignature() {
+        return FLUSH_TABLE_PROCEDURE_SIGNATURE;
     }
-    // We reply on the existing Distributed Procedure framework to give us the status.
-    return proc.isCompleted();
-  }
 
+    @Override
+    public void execProcedure(ProcedureDescription desc) throws IOException {
+        TableName tableName = TableName.valueOf(desc.getInstance());
+        // call pre coproc hook
+        MasterCoprocessorHost cpHost = master.getMasterCoprocessorHost();
+        if (cpHost != null) {
+            cpHost.preTableFlush(tableName);
+        }
+        // Get the list of region servers that host the online regions for table.
+        // We use the procedure instance name to carry the table name from the client.
+        // It is possible that regions may move after we get the region server list.
+        // Each region server will get its own online regions for the table.
+        // We may still miss regions that need to be flushed.
+        List<Pair<RegionInfo, ServerName>> regionsAndLocations = master.getAssignmentManager().getTableRegionsAndLocations(tableName, false);
+        Set<String> regionServers = new HashSet<>(regionsAndLocations.size());
+        for (Pair<RegionInfo, ServerName> region : regionsAndLocations) {
+            if (region != null && region.getFirst() != null && region.getSecond() != null) {
+                RegionInfo hri = region.getFirst();
+                if (hri.isOffline() && (hri.isSplit() || hri.isSplitParent()))
+                    continue;
+                regionServers.add(region.getSecond().toString());
+            }
+        }
+        ForeignExceptionDispatcher monitor = new ForeignExceptionDispatcher(desc.getInstance());
+        HBaseProtos.NameStringPair family = null;
+        for (HBaseProtos.NameStringPair nsp : desc.getConfigurationList()) {
+            if (HConstants.FAMILY_KEY_STR.equals(nsp.getName())) {
+                family = nsp;
+            }
+        }
+        byte[] procArgs = family != null ? family.toByteArray() : new byte[0];
+        // Kick of the global procedure from the master coordinator to the region servers.
+        // We rely on the existing Distributed Procedure framework to prevent any concurrent
+        // procedure with the same name.
+        Procedure proc = coordinator.startProcedure(monitor, desc.getInstance(), procArgs, Lists.newArrayList(regionServers));
+        monitor.rethrowException();
+        if (proc == null) {
+            String msg = "Failed to submit distributed procedure " + desc.getSignature() + " for '" + desc.getInstance() + "'. " + "Another flush procedure is running?";
+            LOG.error(msg);
+            throw new IOException(msg);
+        }
+        procMap.put(tableName, proc);
+        try {
+            // wait for the procedure to complete. A timer thread is kicked off that should cancel this
+            // if it takes too long.
+            proc.waitForCompleted();
+            LOG.info("Done waiting - exec procedure " + desc.getSignature() + " for '" + desc.getInstance() + "'");
+            LOG.info("Master flush table procedure is successful!");
+        } catch (InterruptedException e) {
+            ForeignException ee = new ForeignException("Interrupted while waiting for flush table procdure to finish", e);
+            monitor.receive(ee);
+            Thread.currentThread().interrupt();
+        } catch (ForeignException e) {
+            ForeignException ee = new ForeignException("Exception while waiting for flush table procdure to finish", e);
+            monitor.receive(ee);
+        }
+        monitor.rethrowException();
+    }
+
+    @Override
+    public void checkPermissions(ProcedureDescription desc, AccessChecker accessChecker, User user) throws IOException {
+        // Done by AccessController as part of preTableFlush coprocessor hook (legacy code path).
+        // In future, when we AC is removed for good, that check should be moved here.
+    }
+
+    @Override
+    public synchronized boolean isProcedureDone(ProcedureDescription desc) throws IOException {
+        // Procedure instance name is the table name.
+        TableName tableName = TableName.valueOf(desc.getInstance());
+        Procedure proc = procMap.get(tableName);
+        if (proc == null) {
+            // The procedure has not even been started yet.
+            // The client would request the procedure and call isProcedureDone().
+            // The HBaseAdmin.execProcedure() wraps both request and isProcedureDone().
+            return false;
+        }
+        // We reply on the existing Distributed Procedure framework to give us the status.
+        return proc.isCompleted();
+    }
 }

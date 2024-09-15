@@ -32,108 +32,96 @@ import org.apache.hadoop.hbase.util.ForeignExceptionUtil;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hadoop.hbase.shaded.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.ErrorHandlingProtos;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.ClaimReplicationQueueRemoteParameter;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.ClaimReplicationQueueRemoteStateData;
 
 @InterfaceAudience.Private
-public class ClaimReplicationQueueRemoteProcedure extends ServerRemoteProcedure
-  implements ServerProcedureInterface, RemoteProcedure<MasterProcedureEnv, ServerName> {
+public class ClaimReplicationQueueRemoteProcedure extends ServerRemoteProcedure implements ServerProcedureInterface, RemoteProcedure<MasterProcedureEnv, ServerName> {
 
-  private static final Logger LOG =
-    LoggerFactory.getLogger(ClaimReplicationQueueRemoteProcedure.class);
+    private static final Logger LOG = LoggerFactory.getLogger(ClaimReplicationQueueRemoteProcedure.class);
 
-  private ServerName crashedServer;
+    private ServerName crashedServer;
 
-  private String queue;
+    private String queue;
 
-  public ClaimReplicationQueueRemoteProcedure() {
-  }
-
-  public ClaimReplicationQueueRemoteProcedure(ServerName crashedServer, String queue,
-    ServerName targetServer) {
-    this.crashedServer = crashedServer;
-    this.queue = queue;
-    this.targetServer = targetServer;
-  }
-
-  @Override
-  public Optional<RemoteOperation> remoteCallBuild(MasterProcedureEnv env, ServerName remote) {
-    assert targetServer.equals(remote);
-    return Optional.of(new ServerOperation(this, getProcId(), ClaimReplicationQueueCallable.class,
-      ClaimReplicationQueueRemoteParameter.newBuilder()
-        .setCrashedServer(ProtobufUtil.toServerName(crashedServer)).setQueue(queue).build()
-        .toByteArray()));
-  }
-
-  @Override
-  public ServerName getServerName() {
-    // return crashed server here, as we are going to recover its replication queues so we should
-    // use its scheduler queue instead of the one for the target server.
-    return crashedServer;
-  }
-
-  @Override
-  public boolean hasMetaTableRegion() {
-    return false;
-  }
-
-  @Override
-  public ServerOperationType getServerOperationType() {
-    return ServerOperationType.CLAIM_REPLICATION_QUEUE_REMOTE;
-  }
-
-  @Override
-  protected boolean complete(MasterProcedureEnv env, Throwable error) {
-    if (error != null) {
-      LOG.warn("Failed to claim replication queue {} of crashed server on server {} ", queue,
-        crashedServer, targetServer, error);
-      return false;
-    } else {
-      return true;
+    public ClaimReplicationQueueRemoteProcedure() {
     }
-  }
 
-  @Override
-  protected void rollback(MasterProcedureEnv env) throws IOException, InterruptedException {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  protected boolean abort(MasterProcedureEnv env) {
-    return false;
-  }
-
-  @Override
-  protected boolean waitInitialized(MasterProcedureEnv env) {
-    return env.waitInitialized(this);
-  }
-
-  @Override
-  protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    ClaimReplicationQueueRemoteStateData.Builder builder = ClaimReplicationQueueRemoteStateData
-      .newBuilder().setCrashedServer(ProtobufUtil.toServerName(crashedServer)).setQueue(queue)
-      .setTargetServer(ProtobufUtil.toServerName(targetServer)).setState(state);
-    if (this.remoteError != null) {
-      ErrorHandlingProtos.ForeignExceptionMessage fem =
-        ForeignExceptionUtil.toProtoForeignException(remoteError);
-      builder.setError(fem);
+    public ClaimReplicationQueueRemoteProcedure(ServerName crashedServer, String queue, ServerName targetServer) {
+        this.crashedServer = crashedServer;
+        this.queue = queue;
+        this.targetServer = targetServer;
     }
-    serializer.serialize(builder.build());
-  }
 
-  @Override
-  protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    ClaimReplicationQueueRemoteStateData data =
-      serializer.deserialize(ClaimReplicationQueueRemoteStateData.class);
-    crashedServer = ProtobufUtil.toServerName(data.getCrashedServer());
-    queue = data.getQueue();
-    targetServer = ProtobufUtil.toServerName(data.getTargetServer());
-    state = data.getState();
-    if (data.hasError()) {
-      this.remoteError = ForeignExceptionUtil.toException(data.getError());
+    @Override
+    public Optional<RemoteOperation> remoteCallBuild(MasterProcedureEnv env, ServerName remote) {
+        assert targetServer.equals(remote);
+        return Optional.of(new ServerOperation(this, getProcId(), ClaimReplicationQueueCallable.class, ClaimReplicationQueueRemoteParameter.newBuilder().setCrashedServer(ProtobufUtil.toServerName(crashedServer)).setQueue(queue).build().toByteArray()));
     }
-  }
+
+    @Override
+    public ServerName getServerName() {
+        // return crashed server here, as we are going to recover its replication queues so we should
+        // use its scheduler queue instead of the one for the target server.
+        return crashedServer;
+    }
+
+    @Override
+    public boolean hasMetaTableRegion() {
+        return false;
+    }
+
+    @Override
+    public ServerOperationType getServerOperationType() {
+        return ServerOperationType.CLAIM_REPLICATION_QUEUE_REMOTE;
+    }
+
+    @Override
+    protected boolean complete(MasterProcedureEnv env, Throwable error) {
+        if (error != null) {
+            LOG.warn("Failed to claim replication queue {} of crashed server on server {} ", queue, crashedServer, targetServer, error);
+            return false;
+        } else {
+            return true;
+        }
+    }
+
+    @Override
+    protected void rollback(MasterProcedureEnv env) throws IOException, InterruptedException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    protected boolean abort(MasterProcedureEnv env) {
+        return false;
+    }
+
+    @Override
+    protected boolean waitInitialized(MasterProcedureEnv env) {
+        return env.waitInitialized(this);
+    }
+
+    @Override
+    protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        ClaimReplicationQueueRemoteStateData.Builder builder = ClaimReplicationQueueRemoteStateData.newBuilder().setCrashedServer(ProtobufUtil.toServerName(crashedServer)).setQueue(queue).setTargetServer(ProtobufUtil.toServerName(targetServer)).setState(state);
+        if (this.remoteError != null) {
+            ErrorHandlingProtos.ForeignExceptionMessage fem = ForeignExceptionUtil.toProtoForeignException(remoteError);
+            builder.setError(fem);
+        }
+        serializer.serialize(((org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.ClaimReplicationQueueRemoteStateData) org.zlab.ocov.tracker.Runtime.update(builder.build(), 6, serializer)));
+    }
+
+    @Override
+    protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        ClaimReplicationQueueRemoteStateData data = serializer.deserialize(ClaimReplicationQueueRemoteStateData.class);
+        crashedServer = ProtobufUtil.toServerName(data.getCrashedServer());
+        queue = data.getQueue();
+        targetServer = ProtobufUtil.toServerName(data.getTargetServer());
+        state = data.getState();
+        if (data.hasError()) {
+            this.remoteError = ForeignExceptionUtil.toException(data.getError());
+        }
+    }
 }
