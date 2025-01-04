@@ -18,7 +18,6 @@
 package org.apache.hadoop.hbase.wal;
 
 import static org.apache.hadoop.hbase.TableName.META_TABLE_NAME;
-
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.util.HashMap;
@@ -57,152 +56,138 @@ import org.slf4j.LoggerFactory;
  */
 @InterfaceAudience.Private
 public class BoundedRecoveredHFilesOutputSink extends OutputSink {
-  private static final Logger LOG = LoggerFactory.getLogger(BoundedRecoveredHFilesOutputSink.class);
 
-  private final WALSplitter walSplitter;
+    private static final Logger LOG = LoggerFactory.getLogger(BoundedRecoveredHFilesOutputSink.class);
 
-  // Since the splitting process may create multiple output files, we need a map
-  // to track the output count of each region.
-  private ConcurrentMap<String, Long> regionEditsWrittenMap = new ConcurrentHashMap<>();
-  // Need a counter to track the opening writers.
-  private final AtomicInteger openingWritersNum = new AtomicInteger(0);
+    private final WALSplitter walSplitter;
 
-  public BoundedRecoveredHFilesOutputSink(WALSplitter walSplitter,
-    WALSplitter.PipelineController controller, EntryBuffers entryBuffers, int numWriters) {
-    super(controller, entryBuffers, numWriters);
-    this.walSplitter = walSplitter;
-  }
+    // Since the splitting process may create multiple output files, we need a map
+    // to track the output count of each region.
+    private ConcurrentMap<String, Long> regionEditsWrittenMap = new ConcurrentHashMap<>();
 
-  @Override
-  public void append(RegionEntryBuffer buffer) throws IOException {
-    Map<String, CellSet> familyCells = new HashMap<>();
-    Map<String, Long> familySeqIds = new HashMap<>();
-    boolean isMetaTable = buffer.tableName.equals(META_TABLE_NAME);
-    // First iterate all Cells to find which column families are present and to stamp Cell with
-    // sequence id.
-    for (WAL.Entry entry : buffer.entries) {
-      long seqId = entry.getKey().getSequenceId();
-      List<Cell> cells = entry.getEdit().getCells();
-      for (Cell cell : cells) {
-        if (CellUtil.matchingFamily(cell, WALEdit.METAFAMILY)) {
-          continue;
+    // Need a counter to track the opening writers.
+    private final AtomicInteger openingWritersNum = new AtomicInteger(0);
+
+    public BoundedRecoveredHFilesOutputSink(WALSplitter walSplitter, WALSplitter.PipelineController controller, EntryBuffers entryBuffers, int numWriters) {
+        super(controller, entryBuffers, numWriters);
+        this.walSplitter = walSplitter;
+    }
+
+    @Override
+    public void append(RegionEntryBuffer buffer) throws IOException {
+        Map<String, CellSet> familyCells = new HashMap<>();
+        Map<String, Long> familySeqIds = new HashMap<>();
+        boolean isMetaTable = buffer.tableName.equals(META_TABLE_NAME);
+        // First iterate all Cells to find which column families are present and to stamp Cell with
+        // sequence id.
+        for (WAL.Entry entry : buffer.entries) {
+            long seqId = entry.getKey().getSequenceId();
+            List<Cell> cells = entry.getEdit().getCells();
+            for (Cell cell : cells) {
+                if (CellUtil.matchingFamily(cell, WALEdit.METAFAMILY)) {
+                    continue;
+                }
+                PrivateCellUtil.setSequenceId(cell, seqId);
+                String familyName = Bytes.toString(CellUtil.cloneFamily(cell));
+                // comparator need to be specified for meta
+                familyCells.computeIfAbsent(familyName, key -> new CellSet(isMetaTable ? MetaCellComparator.META_COMPARATOR : CellComparatorImpl.COMPARATOR)).add(cell);
+                familySeqIds.compute(familyName, (k, v) -> v == null ? seqId : Math.max(v, seqId));
+            }
         }
-        PrivateCellUtil.setSequenceId(cell, seqId);
-        String familyName = Bytes.toString(CellUtil.cloneFamily(cell));
-        // comparator need to be specified for meta
-        familyCells
-          .computeIfAbsent(familyName,
-            key -> new CellSet(
-              isMetaTable ? MetaCellComparator.META_COMPARATOR : CellComparatorImpl.COMPARATOR))
-          .add(cell);
-        familySeqIds.compute(familyName, (k, v) -> v == null ? seqId : Math.max(v, seqId));
-      }
-    }
-
-    // Create a new hfile writer for each column family, write edits then close writer.
-    String regionName = Bytes.toString(buffer.encodedRegionName);
-    for (Map.Entry<String, CellSet> cellsEntry : familyCells.entrySet()) {
-      String familyName = cellsEntry.getKey();
-      StoreFileWriter writer = createRecoveredHFileWriter(buffer.tableName, regionName,
-        familySeqIds.get(familyName), familyName, isMetaTable);
-      LOG.trace("Created {}", writer.getPath());
-      openingWritersNum.incrementAndGet();
-      try {
-        for (Cell cell : cellsEntry.getValue()) {
-          writer.append(cell);
+        // Create a new hfile writer for each column family, write edits then close writer.
+        String regionName = Bytes.toString(buffer.encodedRegionName);
+        for (Map.Entry<String, CellSet> cellsEntry : familyCells.entrySet()) {
+            String familyName = cellsEntry.getKey();
+            StoreFileWriter writer = createRecoveredHFileWriter(buffer.tableName, regionName, familySeqIds.get(familyName), familyName, isMetaTable);
+            LOG.trace("Created {}", writer.getPath());
+            openingWritersNum.incrementAndGet();
+            try {
+                for (Cell cell : cellsEntry.getValue()) {
+                    writer.append(cell);
+                }
+                // Append the max seqid to hfile, used when recovery.
+                writer.appendMetadata(familySeqIds.get(familyName), false);
+                regionEditsWrittenMap.compute(Bytes.toString(buffer.encodedRegionName), (k, v) -> v == null ? buffer.entries.size() : v + buffer.entries.size());
+                splits.add(writer.getPath());
+                openingWritersNum.decrementAndGet();
+            } finally {
+                writer.close();
+                LOG.trace("Closed {}, edits={}", writer.getPath(), familyCells.size());
+            }
         }
-        // Append the max seqid to hfile, used when recovery.
-        writer.appendMetadata(familySeqIds.get(familyName), false);
-        regionEditsWrittenMap.compute(Bytes.toString(buffer.encodedRegionName),
-          (k, v) -> v == null ? buffer.entries.size() : v + buffer.entries.size());
-        splits.add(writer.getPath());
-        openingWritersNum.decrementAndGet();
-      } finally {
-        writer.close();
-        LOG.trace("Closed {}, edits={}", writer.getPath(), familyCells.size());
-      }
     }
-  }
 
-  @Override
-  public List<Path> close() throws IOException {
-    boolean isSuccessful = true;
-    try {
-      isSuccessful = finishWriterThreads(false);
-    } finally {
-      isSuccessful &= writeRemainingEntryBuffers();
-    }
-    return isSuccessful ? splits : null;
-  }
-
-  /**
-   * Write out the remaining RegionEntryBuffers and close the writers.
-   * @return true when there is no error.
-   */
-  private boolean writeRemainingEntryBuffers() throws IOException {
-    for (EntryBuffers.RegionEntryBuffer buffer : entryBuffers.buffers.values()) {
-      closeCompletionService.submit(() -> {
-        append(buffer);
-        return null;
-      });
-    }
-    boolean progressFailed = false;
-    try {
-      for (int i = 0, n = entryBuffers.buffers.size(); i < n; i++) {
-        Future<Void> future = closeCompletionService.take();
-        future.get();
-        if (!progressFailed && reporter != null && !reporter.progress()) {
-          progressFailed = true;
+    @Override
+    public List<Path> close() throws IOException {
+        boolean isSuccessful = true;
+        try {
+            isSuccessful = finishWriterThreads(false);
+        } finally {
+            isSuccessful &= writeRemainingEntryBuffers();
         }
-      }
-    } catch (InterruptedException e) {
-      IOException iie = new InterruptedIOException();
-      iie.initCause(e);
-      throw iie;
-    } catch (ExecutionException e) {
-      throw new IOException(e.getCause());
-    } finally {
-      closeThreadPool.shutdownNow();
+        return isSuccessful ? splits : null;
     }
-    return !progressFailed;
-  }
 
-  @Override
-  public Map<String, Long> getOutputCounts() {
-    return regionEditsWrittenMap;
-  }
+    /**
+     * Write out the remaining RegionEntryBuffers and close the writers.
+     * @return true when there is no error.
+     */
+    private boolean writeRemainingEntryBuffers() throws IOException {
+        for (EntryBuffers.RegionEntryBuffer buffer : entryBuffers.buffers.values()) {
+            closeCompletionService.submit(() -> {
+                append(buffer);
+                return null;
+            });
+        }
+        boolean progressFailed = false;
+        try {
+            for (int i = 0, n = entryBuffers.buffers.size(); i < n; i++) {
+                Future<Void> future = closeCompletionService.take();
+                future.get();
+                if (!progressFailed && reporter != null && !reporter.progress()) {
+                    progressFailed = true;
+                }
+            }
+        } catch (InterruptedException e) {
+            IOException iie = new InterruptedIOException();
+            iie.initCause(e);
+            throw iie;
+        } catch (ExecutionException e) {
+            throw new IOException(e.getCause());
+        } finally {
+            closeThreadPool.shutdownNow();
+        }
+        return !progressFailed;
+    }
 
-  @Override
-  public int getNumberOfRecoveredRegions() {
-    return regionEditsWrittenMap.size();
-  }
+    @Override
+    public Map<String, Long> getOutputCounts() {
+        return regionEditsWrittenMap;
+    }
 
-  @Override
-  public int getNumOpenWriters() {
-    return openingWritersNum.get();
-  }
+    @Override
+    public int getNumberOfRecoveredRegions() {
+        return regionEditsWrittenMap.size();
+    }
 
-  @Override
-  public boolean keepRegionEvent(Entry entry) {
-    return false;
-  }
+    @Override
+    public int getNumOpenWriters() {
+        return openingWritersNum.get();
+    }
 
-  /**
-   * @return Returns a base HFile without compressions or encodings; good enough for recovery given
-   *         hfile has metadata on how it was written.
-   */
-  private StoreFileWriter createRecoveredHFileWriter(TableName tableName, String regionName,
-    long seqId, String familyName, boolean isMetaTable) throws IOException {
-    Path outputDir = WALSplitUtil.tryCreateRecoveredHFilesDir(walSplitter.rootFS, walSplitter.conf,
-      tableName, regionName, familyName);
-    StoreFileWriter.Builder writerBuilder =
-      new StoreFileWriter.Builder(walSplitter.conf, CacheConfig.DISABLED, walSplitter.rootFS)
-        .withOutputDir(outputDir);
-    HFileContext hFileContext =
-      new HFileContextBuilder().withChecksumType(StoreUtils.getChecksumType(walSplitter.conf))
-        .withBytesPerCheckSum(StoreUtils.getBytesPerChecksum(walSplitter.conf)).withCellComparator(
-          isMetaTable ? MetaCellComparator.META_COMPARATOR : CellComparatorImpl.COMPARATOR)
-        .build();
-    return writerBuilder.withFileContext(hFileContext).build();
-  }
+    @Override
+    public boolean keepRegionEvent(Entry entry) {
+        return false;
+    }
+
+    /**
+     * @return Returns a base HFile without compressions or encodings; good enough for recovery given
+     *         hfile has metadata on how it was written.
+     */
+    private StoreFileWriter createRecoveredHFileWriter(TableName tableName, String regionName, long seqId, String familyName, boolean isMetaTable) throws IOException {
+        Path outputDir = WALSplitUtil.tryCreateRecoveredHFilesDir(walSplitter.rootFS, walSplitter.conf, tableName, regionName, familyName);
+        StoreFileWriter.Builder writerBuilder = new StoreFileWriter.Builder(walSplitter.conf, CacheConfig.DISABLED, walSplitter.rootFS).withOutputDir(outputDir);
+        HFileContext hFileContext = new HFileContextBuilder().withChecksumType(StoreUtils.getChecksumType(walSplitter.conf)).withBytesPerCheckSum(StoreUtils.getBytesPerChecksum(walSplitter.conf)).withCellComparator(isMetaTable ? MetaCellComparator.META_COMPARATOR : CellComparatorImpl.COMPARATOR).build();
+        return writerBuilder.withFileContext(hFileContext).build();
+    }
 }

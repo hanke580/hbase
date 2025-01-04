@@ -36,7 +36,6 @@ import org.apache.hadoop.hbase.procedure2.ProcedureYieldException;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hadoop.hbase.shaded.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.ModifyStoreFileTrackerState;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.ModifyStoreFileTrackerStateData;
@@ -49,227 +48,208 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.M
  * this procedure to simplify the work of our users.
  */
 @InterfaceAudience.Private
-public abstract class ModifyStoreFileTrackerProcedure
-  extends AbstractStateMachineTableProcedure<ModifyStoreFileTrackerState> {
+public abstract class ModifyStoreFileTrackerProcedure extends AbstractStateMachineTableProcedure<ModifyStoreFileTrackerState> {
 
-  private static final Logger LOG = LoggerFactory.getLogger(ModifyStoreFileTrackerProcedure.class);
+    private static final Logger LOG = LoggerFactory.getLogger(ModifyStoreFileTrackerProcedure.class);
 
-  private TableName tableName;
+    private TableName tableName;
 
-  private String dstSFT;
+    private String dstSFT;
 
-  protected ModifyStoreFileTrackerProcedure() {
-  }
-
-  protected ModifyStoreFileTrackerProcedure(MasterProcedureEnv env, TableName tableName,
-    String dstSFT) throws HBaseIOException {
-    super(env);
-    checkDstSFT(dstSFT);
-    this.tableName = tableName;
-    this.dstSFT = dstSFT;
-    preflightChecks(env, true);
-  }
-
-  private void checkDstSFT(String dstSFT) throws DoNotRetryIOException {
-    if (
-      MigrationStoreFileTracker.class
-        .isAssignableFrom(StoreFileTrackerFactory.getTrackerClass(dstSFT))
-    ) {
-      throw new DoNotRetryIOException("Do not need to transfer to " + dstSFT);
+    protected ModifyStoreFileTrackerProcedure() {
     }
-  }
 
-  @Override
-  public TableName getTableName() {
-    return tableName;
-  }
-
-  @Override
-  public TableOperationType getTableOperationType() {
-    return TableOperationType.EDIT;
-  }
-
-  private enum StoreFileTrackerState {
-    NEED_FINISH_PREVIOUS_MIGRATION_FIRST,
-    NEED_START_MIGRATION,
-    NEED_FINISH_MIGRATION,
-    ALREADY_FINISHED
-  }
-
-  private StoreFileTrackerState checkState(Configuration conf, String dstSFT) {
-    // there are 4 possible conditions:
-    // 1. The table or family has already made use of the dstSFT. In this way we just finish the
-    // procedure.
-    // 2. The table or family is not using the dstSFT but also not using migration SFT,
-    // then we just go to the MODIFY_STORE_FILE_TRACKER_MIGRATION state.
-    // 3. The table or family has already been using migration SFT and the dst SFT is what we
-    // expect, just go to MODIFY_STORE_FILE_TRACKER_FINISH.
-    // 4. The table or family is using migration SFT and the dst SFT is not what we
-    // expect, then need to schedule a MTP to change it to the dst SFT of the current migration
-    // SFT first, and then go to MODIFY_STORE_FILE_TRACKER_MIGRATION.
-    Class<? extends StoreFileTracker> clazz = StoreFileTrackerFactory.getTrackerClass(conf);
-    Class<? extends StoreFileTracker> dstSFTClass = StoreFileTrackerFactory.getTrackerClass(dstSFT);
-    if (clazz.equals(dstSFTClass)) {
-      return StoreFileTrackerState.ALREADY_FINISHED;
+    protected ModifyStoreFileTrackerProcedure(MasterProcedureEnv env, TableName tableName, String dstSFT) throws HBaseIOException {
+        super(env);
+        checkDstSFT(dstSFT);
+        this.tableName = tableName;
+        this.dstSFT = dstSFT;
+        preflightChecks(env, true);
     }
-    if (!MigrationStoreFileTracker.class.isAssignableFrom(clazz)) {
-      return StoreFileTrackerState.NEED_START_MIGRATION;
+
+    private void checkDstSFT(String dstSFT) throws DoNotRetryIOException {
+        if (MigrationStoreFileTracker.class.isAssignableFrom(StoreFileTrackerFactory.getTrackerClass(dstSFT))) {
+            throw new DoNotRetryIOException("Do not need to transfer to " + dstSFT);
+        }
     }
-    Class<? extends StoreFileTracker> currentDstSFT = StoreFileTrackerFactory
-      .getStoreFileTrackerClassForMigration(conf, MigrationStoreFileTracker.DST_IMPL);
-    if (currentDstSFT.equals(dstSFTClass)) {
-      return StoreFileTrackerState.NEED_FINISH_MIGRATION;
-    } else {
-      return StoreFileTrackerState.NEED_FINISH_PREVIOUS_MIGRATION_FIRST;
+
+    @Override
+    public TableName getTableName() {
+        return tableName;
     }
-  }
 
-  private final String getRestoreSFT(Configuration conf) {
-    Class<? extends StoreFileTracker> currentDstSFT = StoreFileTrackerFactory
-      .getStoreFileTrackerClassForMigration(conf, MigrationStoreFileTracker.DST_IMPL);
-    return StoreFileTrackerFactory.getStoreFileTrackerName(currentDstSFT);
-  }
-
-  protected abstract void preCheck(TableDescriptor current) throws IOException;
-
-  protected abstract Configuration createConf(Configuration conf, TableDescriptor current);
-
-  protected abstract TableDescriptor createRestoreTableDescriptor(TableDescriptor current,
-    String restoreSFT);
-
-  private Flow preCheckAndTryRestoreSFT(MasterProcedureEnv env) throws IOException {
-    // Checks whether the table exists
-    if (!env.getMasterServices().getTableDescriptors().exists(getTableName())) {
-      throw new TableNotFoundException(getTableName());
+    @Override
+    public TableOperationType getTableOperationType() {
+        return TableOperationType.EDIT;
     }
-    if (!isTableEnabled(env)) {
-      throw new TableNotEnabledException(tableName);
+
+    private enum StoreFileTrackerState {
+
+        NEED_FINISH_PREVIOUS_MIGRATION_FIRST, NEED_START_MIGRATION, NEED_FINISH_MIGRATION, ALREADY_FINISHED
     }
-    TableDescriptor current = env.getMasterServices().getTableDescriptors().get(tableName);
-    preCheck(current);
-    Configuration conf = createConf(env.getMasterConfiguration(), current);
-    StoreFileTrackerState state = checkState(conf, dstSFT);
-    switch (state) {
-      case NEED_FINISH_PREVIOUS_MIGRATION_FIRST:
-        TableDescriptor td = createRestoreTableDescriptor(current, getRestoreSFT(conf));
-        addChildProcedure(new ModifyTableProcedure(env, td));
-        setNextState(
-          ModifyStoreFileTrackerState.MODIFY_STORE_FILE_TRACKER_FINISH_PREVIOUS_MIGRATION);
-        return Flow.HAS_MORE_STATE;
-      case NEED_START_MIGRATION:
-        setNextState(ModifyStoreFileTrackerState.MODIFY_STORE_FILE_TRACKER_START_MIGRATION);
-        return Flow.HAS_MORE_STATE;
-      case NEED_FINISH_MIGRATION:
+
+    private StoreFileTrackerState checkState(Configuration conf, String dstSFT) {
+        // there are 4 possible conditions:
+        // 1. The table or family has already made use of the dstSFT. In this way we just finish the
+        // procedure.
+        // 2. The table or family is not using the dstSFT but also not using migration SFT,
+        // then we just go to the MODIFY_STORE_FILE_TRACKER_MIGRATION state.
+        // 3. The table or family has already been using migration SFT and the dst SFT is what we
+        // expect, just go to MODIFY_STORE_FILE_TRACKER_FINISH.
+        // 4. The table or family is using migration SFT and the dst SFT is not what we
+        // expect, then need to schedule a MTP to change it to the dst SFT of the current migration
+        // SFT first, and then go to MODIFY_STORE_FILE_TRACKER_MIGRATION.
+        Class<? extends StoreFileTracker> clazz = StoreFileTrackerFactory.getTrackerClass(conf);
+        Class<? extends StoreFileTracker> dstSFTClass = StoreFileTrackerFactory.getTrackerClass(dstSFT);
+        if (clazz.equals(dstSFTClass)) {
+            return StoreFileTrackerState.ALREADY_FINISHED;
+        }
+        if (!MigrationStoreFileTracker.class.isAssignableFrom(clazz)) {
+            return StoreFileTrackerState.NEED_START_MIGRATION;
+        }
+        Class<? extends StoreFileTracker> currentDstSFT = StoreFileTrackerFactory.getStoreFileTrackerClassForMigration(conf, MigrationStoreFileTracker.DST_IMPL);
+        if (currentDstSFT.equals(dstSFTClass)) {
+            return StoreFileTrackerState.NEED_FINISH_MIGRATION;
+        } else {
+            return StoreFileTrackerState.NEED_FINISH_PREVIOUS_MIGRATION_FIRST;
+        }
+    }
+
+    private final String getRestoreSFT(Configuration conf) {
+        Class<? extends StoreFileTracker> currentDstSFT = StoreFileTrackerFactory.getStoreFileTrackerClassForMigration(conf, MigrationStoreFileTracker.DST_IMPL);
+        return StoreFileTrackerFactory.getStoreFileTrackerName(currentDstSFT);
+    }
+
+    protected abstract void preCheck(TableDescriptor current) throws IOException;
+
+    protected abstract Configuration createConf(Configuration conf, TableDescriptor current);
+
+    protected abstract TableDescriptor createRestoreTableDescriptor(TableDescriptor current, String restoreSFT);
+
+    private Flow preCheckAndTryRestoreSFT(MasterProcedureEnv env) throws IOException {
+        // Checks whether the table exists
+        if (!env.getMasterServices().getTableDescriptors().exists(getTableName())) {
+            throw new TableNotFoundException(getTableName());
+        }
+        if (!isTableEnabled(env)) {
+            throw new TableNotEnabledException(tableName);
+        }
+        TableDescriptor current = env.getMasterServices().getTableDescriptors().get(tableName);
+        preCheck(current);
+        Configuration conf = createConf(env.getMasterConfiguration(), current);
+        StoreFileTrackerState state = checkState(conf, dstSFT);
+        switch(state) {
+            case NEED_FINISH_PREVIOUS_MIGRATION_FIRST:
+                TableDescriptor td = createRestoreTableDescriptor(current, getRestoreSFT(conf));
+                addChildProcedure(new ModifyTableProcedure(env, td));
+                setNextState(ModifyStoreFileTrackerState.MODIFY_STORE_FILE_TRACKER_FINISH_PREVIOUS_MIGRATION);
+                return Flow.HAS_MORE_STATE;
+            case NEED_START_MIGRATION:
+                setNextState(ModifyStoreFileTrackerState.MODIFY_STORE_FILE_TRACKER_START_MIGRATION);
+                return Flow.HAS_MORE_STATE;
+            case NEED_FINISH_MIGRATION:
+                setNextState(ModifyStoreFileTrackerState.MODIFY_STORE_FILE_TRACKER_FINISH_MIGRATION);
+                return Flow.HAS_MORE_STATE;
+            case ALREADY_FINISHED:
+                return Flow.NO_MORE_STATE;
+            default:
+                throw new UnsupportedOperationException("unhandled state=" + state);
+        }
+    }
+
+    protected abstract TableDescriptor createMigrationTableDescriptor(Configuration conf, TableDescriptor current);
+
+    protected final void migrate(Configuration conf, BiConsumer<String, String> setValue) {
+        setValue.accept(StoreFileTrackerFactory.TRACKER_IMPL, StoreFileTrackerFactory.Trackers.MIGRATION.name());
+        setValue.accept(MigrationStoreFileTracker.SRC_IMPL, StoreFileTrackerFactory.getStoreFileTrackerName(conf));
+        setValue.accept(MigrationStoreFileTracker.DST_IMPL, dstSFT);
+    }
+
+    protected abstract TableDescriptor createFinishTableDescriptor(TableDescriptor current);
+
+    protected final void finish(BiConsumer<String, String> setValue, Consumer<String> removeValue) {
+        setValue.accept(StoreFileTrackerFactory.TRACKER_IMPL, dstSFT);
+        removeValue.accept(MigrationStoreFileTracker.SRC_IMPL);
+        removeValue.accept(MigrationStoreFileTracker.DST_IMPL);
+    }
+
+    private void migrate(MasterProcedureEnv env) throws IOException {
+        TableDescriptor current = env.getMasterServices().getTableDescriptors().get(tableName);
+        TableDescriptor td = createMigrationTableDescriptor(env.getMasterConfiguration(), current);
+        addChildProcedure(((ModifyTableProcedure) org.zlab.ocov.tracker.Runtime.update(new ModifyTableProcedure(env, td), 500, env)));
         setNextState(ModifyStoreFileTrackerState.MODIFY_STORE_FILE_TRACKER_FINISH_MIGRATION);
+    }
+
+    private void finish(MasterProcedureEnv env) throws IOException {
+        TableDescriptor current = env.getMasterServices().getTableDescriptors().get(tableName);
+        TableDescriptor td = createFinishTableDescriptor(current);
+        addChildProcedure(((ModifyTableProcedure) org.zlab.ocov.tracker.Runtime.update(new ModifyTableProcedure(env, td), 499, env)));
+    }
+
+    @Override
+    protected Flow executeFromState(MasterProcedureEnv env, ModifyStoreFileTrackerState state) throws ProcedureSuspendedException, ProcedureYieldException, InterruptedException {
+        try {
+            switch(state) {
+                case MODIFY_STORE_FILE_TRACKER_FINISH_PREVIOUS_MIGRATION:
+                    return preCheckAndTryRestoreSFT(env);
+                case MODIFY_STORE_FILE_TRACKER_START_MIGRATION:
+                    migrate(env);
+                    return Flow.HAS_MORE_STATE;
+                case MODIFY_STORE_FILE_TRACKER_FINISH_MIGRATION:
+                    finish(env);
+                    return Flow.NO_MORE_STATE;
+                default:
+                    throw new UnsupportedOperationException("unhandled state=" + state);
+            }
+        } catch (IOException e) {
+            if (isRollbackSupported(state)) {
+                setFailure("master-modify-SFT", e);
+            } else {
+                LOG.warn("Retriable error trying to modify SFT for table={} (in state={})", getTableName(), state, e);
+            }
+        }
         return Flow.HAS_MORE_STATE;
-      case ALREADY_FINISHED:
-        return Flow.NO_MORE_STATE;
-      default:
+    }
+
+    @Override
+    protected void rollbackState(MasterProcedureEnv env, ModifyStoreFileTrackerState state) throws IOException, InterruptedException {
+        if (isRollbackSupported(state)) {
+            return;
+        }
         throw new UnsupportedOperationException("unhandled state=" + state);
     }
-  }
 
-  protected abstract TableDescriptor createMigrationTableDescriptor(Configuration conf,
-    TableDescriptor current);
-
-  protected final void migrate(Configuration conf, BiConsumer<String, String> setValue) {
-    setValue.accept(StoreFileTrackerFactory.TRACKER_IMPL,
-      StoreFileTrackerFactory.Trackers.MIGRATION.name());
-    setValue.accept(MigrationStoreFileTracker.SRC_IMPL,
-      StoreFileTrackerFactory.getStoreFileTrackerName(conf));
-    setValue.accept(MigrationStoreFileTracker.DST_IMPL, dstSFT);
-  }
-
-  protected abstract TableDescriptor createFinishTableDescriptor(TableDescriptor current);
-
-  protected final void finish(BiConsumer<String, String> setValue, Consumer<String> removeValue) {
-    setValue.accept(StoreFileTrackerFactory.TRACKER_IMPL, dstSFT);
-    removeValue.accept(MigrationStoreFileTracker.SRC_IMPL);
-    removeValue.accept(MigrationStoreFileTracker.DST_IMPL);
-  }
-
-  private void migrate(MasterProcedureEnv env) throws IOException {
-    TableDescriptor current = env.getMasterServices().getTableDescriptors().get(tableName);
-    TableDescriptor td = createMigrationTableDescriptor(env.getMasterConfiguration(), current);
-    addChildProcedure(new ModifyTableProcedure(env, td));
-    setNextState(ModifyStoreFileTrackerState.MODIFY_STORE_FILE_TRACKER_FINISH_MIGRATION);
-  }
-
-  private void finish(MasterProcedureEnv env) throws IOException {
-    TableDescriptor current = env.getMasterServices().getTableDescriptors().get(tableName);
-    TableDescriptor td = createFinishTableDescriptor(current);
-    addChildProcedure(new ModifyTableProcedure(env, td));
-  }
-
-  @Override
-  protected Flow executeFromState(MasterProcedureEnv env, ModifyStoreFileTrackerState state)
-    throws ProcedureSuspendedException, ProcedureYieldException, InterruptedException {
-    try {
-      switch (state) {
-        case MODIFY_STORE_FILE_TRACKER_FINISH_PREVIOUS_MIGRATION:
-          return preCheckAndTryRestoreSFT(env);
-        case MODIFY_STORE_FILE_TRACKER_START_MIGRATION:
-          migrate(env);
-          return Flow.HAS_MORE_STATE;
-        case MODIFY_STORE_FILE_TRACKER_FINISH_MIGRATION:
-          finish(env);
-          return Flow.NO_MORE_STATE;
-        default:
-          throw new UnsupportedOperationException("unhandled state=" + state);
-      }
-    } catch (IOException e) {
-      if (isRollbackSupported(state)) {
-        setFailure("master-modify-SFT", e);
-      } else {
-        LOG.warn("Retriable error trying to modify SFT for table={} (in state={})", getTableName(),
-          state, e);
-      }
+    @Override
+    protected ModifyStoreFileTrackerState getState(int stateId) {
+        return ModifyStoreFileTrackerState.forNumber(stateId);
     }
-    return Flow.HAS_MORE_STATE;
-  }
 
-  @Override
-  protected void rollbackState(MasterProcedureEnv env, ModifyStoreFileTrackerState state)
-    throws IOException, InterruptedException {
-    if (isRollbackSupported(state)) {
-      return;
+    @Override
+    protected int getStateId(ModifyStoreFileTrackerState state) {
+        return state.getNumber();
     }
-    throw new UnsupportedOperationException("unhandled state=" + state);
-  }
 
-  @Override
-  protected ModifyStoreFileTrackerState getState(int stateId) {
-    return ModifyStoreFileTrackerState.forNumber(stateId);
-  }
+    @Override
+    protected ModifyStoreFileTrackerState getInitialState() {
+        return ModifyStoreFileTrackerState.MODIFY_STORE_FILE_TRACKER_FINISH_PREVIOUS_MIGRATION;
+    }
 
-  @Override
-  protected int getStateId(ModifyStoreFileTrackerState state) {
-    return state.getNumber();
-  }
+    @Override
+    protected boolean isRollbackSupported(ModifyStoreFileTrackerState state) {
+        return state == ModifyStoreFileTrackerState.MODIFY_STORE_FILE_TRACKER_FINISH_PREVIOUS_MIGRATION;
+    }
 
-  @Override
-  protected ModifyStoreFileTrackerState getInitialState() {
-    return ModifyStoreFileTrackerState.MODIFY_STORE_FILE_TRACKER_FINISH_PREVIOUS_MIGRATION;
-  }
+    @Override
+    protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        super.serializeStateData(serializer);
+        serializer.serialize(((org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.ModifyStoreFileTrackerStateData) org.zlab.ocov.tracker.Runtime.update(ModifyStoreFileTrackerStateData.newBuilder().setTableName(ProtobufUtil.toProtoTableName(tableName)).setDstSft(dstSFT).build(), 158, serializer)));
+    }
 
-  @Override
-  protected boolean isRollbackSupported(ModifyStoreFileTrackerState state) {
-    return state == ModifyStoreFileTrackerState.MODIFY_STORE_FILE_TRACKER_FINISH_PREVIOUS_MIGRATION;
-  }
-
-  @Override
-  protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    super.serializeStateData(serializer);
-    serializer.serialize(ModifyStoreFileTrackerStateData.newBuilder()
-      .setTableName(ProtobufUtil.toProtoTableName(tableName)).setDstSft(dstSFT).build());
-  }
-
-  @Override
-  protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    super.deserializeStateData(serializer);
-    ModifyStoreFileTrackerStateData data =
-      serializer.deserialize(ModifyStoreFileTrackerStateData.class);
-    this.tableName = ProtobufUtil.toTableName(data.getTableName());
-    this.dstSFT = data.getDstSft();
-  }
+    @Override
+    protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        super.deserializeStateData(serializer);
+        ModifyStoreFileTrackerStateData data = serializer.deserialize(ModifyStoreFileTrackerStateData.class);
+        this.tableName = ProtobufUtil.toTableName(data.getTableName());
+        this.dstSFT = data.getDstSft();
+    }
 }

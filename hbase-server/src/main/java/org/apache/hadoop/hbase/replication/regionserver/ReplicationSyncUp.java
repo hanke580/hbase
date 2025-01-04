@@ -59,161 +59,158 @@ import org.apache.zookeeper.KeeperException;
 @InterfaceAudience.Private
 public class ReplicationSyncUp extends Configured implements Tool {
 
-  private static final long SLEEP_TIME = 10000;
+    private static final long SLEEP_TIME = 10000;
 
-  /**
-   * Main program
-   */
-  public static void main(String[] args) throws Exception {
-    int ret = ToolRunner.run(HBaseConfiguration.create(), new ReplicationSyncUp(), args);
-    System.exit(ret);
-  }
+    /**
+     * Main program
+     */
+    public static void main(String[] args) throws Exception {
+        int ret = ToolRunner.run(HBaseConfiguration.create(), new ReplicationSyncUp(), args);
+        System.exit(ret);
+    }
 
-  private Set<ServerName> getLiveRegionServers(ZKWatcher zkw) throws KeeperException {
-    List<String> rsZNodes = ZKUtil.listChildrenNoWatch(zkw, zkw.getZNodePaths().rsZNode);
-    return rsZNodes == null
-      ? Collections.emptySet()
-      : rsZNodes.stream().map(ServerName::parseServerName).collect(Collectors.toSet());
-  }
+    private Set<ServerName> getLiveRegionServers(ZKWatcher zkw) throws KeeperException {
+        List<String> rsZNodes = ZKUtil.listChildrenNoWatch(zkw, zkw.getZNodePaths().rsZNode);
+        return rsZNodes == null ? Collections.emptySet() : rsZNodes.stream().map(ServerName::parseServerName).collect(Collectors.toSet());
+    }
 
-  // When using this tool, usually the source cluster is unhealthy, so we should try to claim the
-  // replication queues for the dead region servers first and then replicate the data out.
-  private void claimReplicationQueues(ZKWatcher zkw, ReplicationSourceManager mgr)
-    throws ReplicationException, KeeperException {
-    List<ServerName> replicators = mgr.getQueueStorage().getListOfReplicators();
-    Set<ServerName> liveRegionServers = getLiveRegionServers(zkw);
-    for (ServerName sn : replicators) {
-      if (!liveRegionServers.contains(sn)) {
-        List<String> replicationQueues = mgr.getQueueStorage().getAllQueues(sn);
-        System.out.println(sn + " is dead, claim its replication queues: " + replicationQueues);
-        for (String queue : replicationQueues) {
-          mgr.claimQueue(sn, queue);
+    // When using this tool, usually the source cluster is unhealthy, so we should try to claim the
+    // replication queues for the dead region servers first and then replicate the data out.
+    private void claimReplicationQueues(ZKWatcher zkw, ReplicationSourceManager mgr) throws ReplicationException, KeeperException {
+        List<ServerName> replicators = mgr.getQueueStorage().getListOfReplicators();
+        Set<ServerName> liveRegionServers = getLiveRegionServers(zkw);
+        for (ServerName sn : replicators) {
+            if (!liveRegionServers.contains(sn)) {
+                List<String> replicationQueues = mgr.getQueueStorage().getAllQueues(sn);
+                System.out.println(sn + " is dead, claim its replication queues: " + replicationQueues);
+                for (String queue : replicationQueues) {
+                    mgr.claimQueue(sn, queue);
+                }
+            }
         }
-      }
-    }
-  }
-
-  @Override
-  public int run(String[] args) throws Exception {
-    Abortable abortable = new Abortable() {
-      @Override
-      public void abort(String why, Throwable e) {
-      }
-
-      @Override
-      public boolean isAborted() {
-        return false;
-      }
-    };
-    Configuration conf = getConf();
-    try (ZKWatcher zkw = new ZKWatcher(conf,
-      "syncupReplication" + EnvironmentEdgeManager.currentTime(), abortable, true)) {
-      Path walRootDir = CommonFSUtils.getWALRootDir(conf);
-      FileSystem fs = CommonFSUtils.getWALFileSystem(conf);
-      Path oldLogDir = new Path(walRootDir, HConstants.HREGION_OLDLOGDIR_NAME);
-      Path logDir = new Path(walRootDir, HConstants.HREGION_LOGDIR_NAME);
-
-      System.out.println("Start Replication Server start");
-      Replication replication = new Replication();
-      replication.initialize(new DummyServer(zkw), fs, logDir, oldLogDir,
-        new WALFactory(conf, "test", null));
-      ReplicationSourceManager manager = replication.getReplicationManager();
-      manager.init();
-      claimReplicationQueues(zkw, manager);
-      while (manager.activeFailoverTaskCount() > 0) {
-        Thread.sleep(SLEEP_TIME);
-      }
-      while (manager.getOldSources().size() > 0) {
-        Thread.sleep(SLEEP_TIME);
-      }
-      manager.join();
-    } catch (InterruptedException e) {
-      System.err.println("didn't wait long enough:" + e);
-      return -1;
-    }
-    return 0;
-  }
-
-  class DummyServer implements Server {
-    String hostname;
-    ZKWatcher zkw;
-
-    DummyServer(ZKWatcher zkw) {
-      // a unique name in case the first run fails
-      hostname = EnvironmentEdgeManager.currentTime() + ".SyncUpTool.replication.org";
-      this.zkw = zkw;
-    }
-
-    DummyServer(String hostname) {
-      this.hostname = hostname;
     }
 
     @Override
-    public Configuration getConfiguration() {
-      return getConf();
+    public int run(String[] args) throws Exception {
+        Abortable abortable = new Abortable() {
+
+            @Override
+            public void abort(String why, Throwable e) {
+            }
+
+            @Override
+            public boolean isAborted() {
+                return false;
+            }
+        };
+        Configuration conf = getConf();
+        try (ZKWatcher zkw = new ZKWatcher(conf, "syncupReplication" + EnvironmentEdgeManager.currentTime(), abortable, true)) {
+            Path walRootDir = CommonFSUtils.getWALRootDir(conf);
+            FileSystem fs = CommonFSUtils.getWALFileSystem(conf);
+            Path oldLogDir = new Path(walRootDir, HConstants.HREGION_OLDLOGDIR_NAME);
+            Path logDir = new Path(walRootDir, HConstants.HREGION_LOGDIR_NAME);
+            System.out.println("Start Replication Server start");
+            Replication replication = new Replication();
+            replication.initialize(new DummyServer(zkw), fs, logDir, oldLogDir, ((WALFactory) org.zlab.ocov.tracker.Runtime.update(new WALFactory(conf, "test", null), 1012, args)));
+            ReplicationSourceManager manager = replication.getReplicationManager();
+            manager.init();
+            claimReplicationQueues(zkw, manager);
+            while (manager.activeFailoverTaskCount() > 0) {
+                Thread.sleep(SLEEP_TIME);
+            }
+            while (manager.getOldSources().size() > 0) {
+                Thread.sleep(SLEEP_TIME);
+            }
+            manager.join();
+        } catch (InterruptedException e) {
+            System.err.println("didn't wait long enough:" + e);
+            return -1;
+        }
+        return 0;
     }
 
-    @Override
-    public ZKWatcher getZooKeeper() {
-      return zkw;
-    }
+    class DummyServer implements Server {
 
-    @Override
-    public CoordinatedStateManager getCoordinatedStateManager() {
-      return null;
-    }
+        String hostname;
 
-    @Override
-    public ServerName getServerName() {
-      return ServerName.valueOf(hostname, 1234, 1L);
-    }
+        ZKWatcher zkw;
 
-    @Override
-    public void abort(String why, Throwable e) {
-    }
+        DummyServer(ZKWatcher zkw) {
+            // a unique name in case the first run fails
+            hostname = EnvironmentEdgeManager.currentTime() + ".SyncUpTool.replication.org";
+            this.zkw = zkw;
+        }
 
-    @Override
-    public boolean isAborted() {
-      return false;
-    }
+        DummyServer(String hostname) {
+            this.hostname = hostname;
+        }
 
-    @Override
-    public void stop(String why) {
-    }
+        @Override
+        public Configuration getConfiguration() {
+            return getConf();
+        }
 
-    @Override
-    public boolean isStopped() {
-      return false;
-    }
+        @Override
+        public ZKWatcher getZooKeeper() {
+            return zkw;
+        }
 
-    @Override
-    public ClusterConnection getConnection() {
-      return null;
-    }
+        @Override
+        public CoordinatedStateManager getCoordinatedStateManager() {
+            return null;
+        }
 
-    @Override
-    public ChoreService getChoreService() {
-      return null;
-    }
+        @Override
+        public ServerName getServerName() {
+            return ServerName.valueOf(hostname, 1234, 1L);
+        }
 
-    @Override
-    public ClusterConnection getClusterConnection() {
-      return null;
-    }
+        @Override
+        public void abort(String why, Throwable e) {
+        }
 
-    @Override
-    public FileSystem getFileSystem() {
-      return null;
-    }
+        @Override
+        public boolean isAborted() {
+            return false;
+        }
 
-    @Override
-    public boolean isStopping() {
-      return false;
-    }
+        @Override
+        public void stop(String why) {
+        }
 
-    @Override
-    public Connection createConnection(Configuration conf) throws IOException {
-      return null;
+        @Override
+        public boolean isStopped() {
+            return false;
+        }
+
+        @Override
+        public ClusterConnection getConnection() {
+            return null;
+        }
+
+        @Override
+        public ChoreService getChoreService() {
+            return null;
+        }
+
+        @Override
+        public ClusterConnection getClusterConnection() {
+            return null;
+        }
+
+        @Override
+        public FileSystem getFileSystem() {
+            return null;
+        }
+
+        @Override
+        public boolean isStopping() {
+            return false;
+        }
+
+        @Override
+        public Connection createConnection(Configuration conf) throws IOException {
+            return null;
+        }
     }
-  }
 }

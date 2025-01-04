@@ -30,19 +30,20 @@ import org.apache.yetus.audience.InterfaceAudience;
  */
 @InterfaceAudience.Private
 public interface CellSink {
-  /**
-   * Append the given cell
-   * @param cell the cell to be added
-   */
-  void append(Cell cell) throws IOException;
 
-  /**
-   * Append the given (possibly partial) list of cells of a row
-   * @param cellList the cell list to be added
-   */
-  default void appendAll(List<Cell> cellList) throws IOException {
-    for (Cell cell : cellList) {
-      append(cell);
+    /**
+     * Append the given cell
+     * @param cell the cell to be added
+     */
+    void append(Cell cell) throws IOException;
+
+    /**
+     * Append the given (possibly partial) list of cells of a row
+     * @param cellList the cell list to be added
+     */
+    default void appendAll(List<Cell> cellList) throws IOException {
+        for (Cell cell : cellList) {
+            append(cell);
+        }
     }
-  }
 }

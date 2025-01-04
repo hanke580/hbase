@@ -31,77 +31,65 @@ import org.apache.hadoop.hbase.regionserver.NoSuchColumnFamilyException;
 import org.apache.hadoop.hbase.regionserver.StoreUtils;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.yetus.audience.InterfaceAudience;
-
 import org.apache.hbase.thirdparty.com.google.protobuf.ByteString;
-
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.ModifyColumnFamilyStoreFileTrackerStateData;
 
 @InterfaceAudience.Private
 public class ModifyColumnFamilyStoreFileTrackerProcedure extends ModifyStoreFileTrackerProcedure {
 
-  private byte[] family;
+    private byte[] family;
 
-  public ModifyColumnFamilyStoreFileTrackerProcedure() {
-  }
-
-  public ModifyColumnFamilyStoreFileTrackerProcedure(MasterProcedureEnv env, TableName tableName,
-    byte[] family, String dstSFT) throws HBaseIOException {
-    super(env, tableName, dstSFT);
-    this.family = family;
-  }
-
-  @Override
-  protected void preCheck(TableDescriptor current) throws IOException {
-    if (!current.hasColumnFamily(family)) {
-      throw new NoSuchColumnFamilyException(
-        Bytes.toStringBinary(family) + " does not exist for table " + current.getTableName());
+    public ModifyColumnFamilyStoreFileTrackerProcedure() {
     }
-  }
 
-  @Override
-  protected Configuration createConf(Configuration conf, TableDescriptor current) {
-    ColumnFamilyDescriptor cfd = current.getColumnFamily(family);
-    return StoreUtils.createStoreConfiguration(conf, current, cfd);
-  }
+    public ModifyColumnFamilyStoreFileTrackerProcedure(MasterProcedureEnv env, TableName tableName, byte[] family, String dstSFT) throws HBaseIOException {
+        super(env, tableName, dstSFT);
+        this.family = family;
+    }
 
-  @Override
-  protected TableDescriptor createRestoreTableDescriptor(TableDescriptor current,
-    String restoreSFT) {
-    ColumnFamilyDescriptor cfd =
-      ColumnFamilyDescriptorBuilder.newBuilder(current.getColumnFamily(family))
-        .setConfiguration(StoreFileTrackerFactory.TRACKER_IMPL, restoreSFT).build();
-    return TableDescriptorBuilder.newBuilder(current).modifyColumnFamily(cfd).build();
-  }
+    @Override
+    protected void preCheck(TableDescriptor current) throws IOException {
+        if (!current.hasColumnFamily(family)) {
+            throw new NoSuchColumnFamilyException(Bytes.toStringBinary(family) + " does not exist for table " + current.getTableName());
+        }
+    }
 
-  @Override
-  protected TableDescriptor createMigrationTableDescriptor(Configuration conf,
-    TableDescriptor current) {
-    ColumnFamilyDescriptorBuilder builder =
-      ColumnFamilyDescriptorBuilder.newBuilder(current.getColumnFamily(family));
-    migrate(conf, builder::setConfiguration);
-    return TableDescriptorBuilder.newBuilder(current).modifyColumnFamily(builder.build()).build();
-  }
+    @Override
+    protected Configuration createConf(Configuration conf, TableDescriptor current) {
+        ColumnFamilyDescriptor cfd = current.getColumnFamily(family);
+        return StoreUtils.createStoreConfiguration(conf, current, cfd);
+    }
 
-  @Override
-  protected TableDescriptor createFinishTableDescriptor(TableDescriptor current) {
-    ColumnFamilyDescriptorBuilder builder =
-      ColumnFamilyDescriptorBuilder.newBuilder(current.getColumnFamily(family));
-    finish(builder::setConfiguration, builder::removeConfiguration);
-    return TableDescriptorBuilder.newBuilder(current).modifyColumnFamily(builder.build()).build();
-  }
+    @Override
+    protected TableDescriptor createRestoreTableDescriptor(TableDescriptor current, String restoreSFT) {
+        ColumnFamilyDescriptor cfd = ColumnFamilyDescriptorBuilder.newBuilder(current.getColumnFamily(family)).setConfiguration(StoreFileTrackerFactory.TRACKER_IMPL, restoreSFT).build();
+        return TableDescriptorBuilder.newBuilder(current).modifyColumnFamily(cfd).build();
+    }
 
-  @Override
-  protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    super.serializeStateData(serializer);
-    serializer.serialize(ModifyColumnFamilyStoreFileTrackerStateData.newBuilder()
-      .setFamily(ByteString.copyFrom(family)).build());
-  }
+    @Override
+    protected TableDescriptor createMigrationTableDescriptor(Configuration conf, TableDescriptor current) {
+        ColumnFamilyDescriptorBuilder builder = ColumnFamilyDescriptorBuilder.newBuilder(current.getColumnFamily(family));
+        migrate(conf, builder::setConfiguration);
+        return TableDescriptorBuilder.newBuilder(current).modifyColumnFamily(builder.build()).build();
+    }
 
-  @Override
-  protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    super.deserializeStateData(serializer);
-    ModifyColumnFamilyStoreFileTrackerStateData data =
-      serializer.deserialize(ModifyColumnFamilyStoreFileTrackerStateData.class);
-    this.family = data.getFamily().toByteArray();
-  }
+    @Override
+    protected TableDescriptor createFinishTableDescriptor(TableDescriptor current) {
+        ColumnFamilyDescriptorBuilder builder = ColumnFamilyDescriptorBuilder.newBuilder(current.getColumnFamily(family));
+        finish(builder::setConfiguration, builder::removeConfiguration);
+        return TableDescriptorBuilder.newBuilder(current).modifyColumnFamily(builder.build()).build();
+    }
+
+    @Override
+    protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        super.serializeStateData(serializer);
+        serializer.serialize(((org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.ModifyColumnFamilyStoreFileTrackerStateData) org.zlab.ocov.tracker.Runtime.update(ModifyColumnFamilyStoreFileTrackerStateData.newBuilder().setFamily(ByteString.copyFrom(family)).build(), 431, serializer)));
+    }
+
+    @Override
+    protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        super.deserializeStateData(serializer);
+        ModifyColumnFamilyStoreFileTrackerStateData data = serializer.deserialize(ModifyColumnFamilyStoreFileTrackerStateData.class);
+        this.family = data.getFamily().toByteArray();
+    }
 }

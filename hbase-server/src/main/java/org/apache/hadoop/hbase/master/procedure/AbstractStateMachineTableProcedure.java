@@ -41,155 +41,148 @@ import org.apache.yetus.audience.InterfaceAudience;
  * helpers like basic locking, sync latch, and toStringClassDetails().
  */
 @InterfaceAudience.Private
-public abstract class AbstractStateMachineTableProcedure<TState>
-  extends StateMachineProcedure<MasterProcedureEnv, TState> implements TableProcedureInterface {
+public abstract class AbstractStateMachineTableProcedure<TState> extends StateMachineProcedure<MasterProcedureEnv, TState> implements TableProcedureInterface {
 
-  // used for compatibility with old clients
-  private final ProcedurePrepareLatch syncLatch;
+    // used for compatibility with old clients
+    private final ProcedurePrepareLatch syncLatch;
 
-  private User user;
+    private User user;
 
-  protected AbstractStateMachineTableProcedure() {
-    // Required by the Procedure framework to create the procedure on replay
-    syncLatch = null;
-  }
-
-  protected AbstractStateMachineTableProcedure(final MasterProcedureEnv env) {
-    this(env, null);
-  }
-
-  /**
-   * @param env Uses this to set Procedure Owner at least.
-   */
-  protected AbstractStateMachineTableProcedure(final MasterProcedureEnv env,
-    final ProcedurePrepareLatch latch) {
-    if (env != null) {
-      this.user = env.getRequestUser();
-      this.setOwner(user);
+    protected AbstractStateMachineTableProcedure() {
+        // Required by the Procedure framework to create the procedure on replay
+        syncLatch = null;
     }
-    // used for compatibility with clients without procedures
-    // they need a sync TableExistsException, TableNotFoundException, TableNotDisabledException, ...
-    this.syncLatch = latch;
-  }
 
-  @Override
-  public abstract TableName getTableName();
-
-  @Override
-  public abstract TableOperationType getTableOperationType();
-
-  @Override
-  public void toStringClassDetails(final StringBuilder sb) {
-    sb.append(getClass().getSimpleName());
-    sb.append(" table=");
-    sb.append(getTableName());
-  }
-
-  @Override
-  protected boolean waitInitialized(MasterProcedureEnv env) {
-    return env.waitInitialized(this);
-  }
-
-  @Override
-  protected LockState acquireLock(final MasterProcedureEnv env) {
-    if (env.getProcedureScheduler().waitTableExclusiveLock(this, getTableName())) {
-      return LockState.LOCK_EVENT_WAIT;
+    protected AbstractStateMachineTableProcedure(final MasterProcedureEnv env) {
+        this(env, null);
     }
-    return LockState.LOCK_ACQUIRED;
-  }
 
-  @Override
-  protected void releaseLock(final MasterProcedureEnv env) {
-    env.getProcedureScheduler().wakeTableExclusiveLock(this, getTableName());
-  }
-
-  protected User getUser() {
-    return user;
-  }
-
-  protected void setUser(final User user) {
-    this.user = user;
-  }
-
-  protected void releaseSyncLatch() {
-    ProcedurePrepareLatch.releaseLatch(syncLatch, this);
-  }
-
-  /**
-   * Check whether a table is modifiable - exists and either offline or online with config set
-   * @param env MasterProcedureEnv
-   */
-  protected void checkTableModifiable(final MasterProcedureEnv env) throws IOException {
-    // Checks whether the table exists
-    if (!env.getMasterServices().getTableDescriptors().exists(getTableName())) {
-      throw new TableNotFoundException(getTableName());
-    }
-  }
-
-  protected final Path getWALRegionDir(MasterProcedureEnv env, RegionInfo region)
-    throws IOException {
-    return CommonFSUtils.getWALRegionDir(env.getMasterConfiguration(), region.getTable(),
-      region.getEncodedName());
-  }
-
-  /**
-   * Check that cluster is up and master is running. Check table is modifiable. If
-   * <code>enabled</code>, check table is enabled else check it is disabled. Call in Procedure
-   * constructor so can pass any exception to caller.
-   * @param enabled If true, check table is enabled and throw exception if not. If false, do the
-   *                inverse. If null, do no table checks.
-   */
-  protected void preflightChecks(MasterProcedureEnv env, Boolean enabled) throws HBaseIOException {
-    MasterServices master = env.getMasterServices();
-    if (!master.isClusterUp()) {
-      throw new HBaseIOException("Cluster not up!");
-    }
-    if (master.isStopping() || master.isStopped()) {
-      throw new HBaseIOException(
-        "Master stopping=" + master.isStopping() + ", stopped=" + master.isStopped());
-    }
-    if (enabled == null) {
-      // Don't do any table checks.
-      return;
-    }
-    try {
-      // Checks table exists and is modifiable.
-      checkTableModifiable(env);
-      TableName tn = getTableName();
-      TableStateManager tsm = master.getTableStateManager();
-      TableState ts = tsm.getTableState(tn);
-      if (enabled) {
-        if (!ts.isEnabledOrEnabling()) {
-          throw new TableNotEnabledException(tn);
+    /**
+     * @param env Uses this to set Procedure Owner at least.
+     */
+    protected AbstractStateMachineTableProcedure(final MasterProcedureEnv env, final ProcedurePrepareLatch latch) {
+        if (env != null) {
+            this.user = env.getRequestUser();
+            this.setOwner(user);
         }
-      } else {
-        if (!ts.isDisabledOrDisabling()) {
-          throw new TableNotDisabledException(tn);
+        // used for compatibility with clients without procedures
+        // they need a sync TableExistsException, TableNotFoundException, TableNotDisabledException, ...
+        this.syncLatch = latch;
+    }
+
+    @Override
+    public abstract TableName getTableName();
+
+    @Override
+    public abstract TableOperationType getTableOperationType();
+
+    @Override
+    public void toStringClassDetails(final StringBuilder sb) {
+        sb.append(getClass().getSimpleName());
+        sb.append(" table=");
+        sb.append(getTableName());
+    }
+
+    @Override
+    protected boolean waitInitialized(MasterProcedureEnv env) {
+        return env.waitInitialized(this);
+    }
+
+    @Override
+    protected LockState acquireLock(final MasterProcedureEnv env) {
+        if (env.getProcedureScheduler().waitTableExclusiveLock(this, getTableName())) {
+            return LockState.LOCK_EVENT_WAIT;
         }
-      }
-    } catch (IOException ioe) {
-      if (ioe instanceof HBaseIOException) {
-        throw (HBaseIOException) ioe;
-      }
-      throw new HBaseIOException(ioe);
+        return LockState.LOCK_ACQUIRED;
     }
-  }
 
-  protected boolean isTableEnabled(MasterProcedureEnv env) {
-    return env.getMasterServices().getTableStateManager().isTableState(getTableName(),
-      TableState.State.ENABLED);
-  }
-
-  /**
-   * Check region is online.
-   */
-  protected static void checkOnline(MasterProcedureEnv env, RegionInfo ri)
-    throws DoNotRetryRegionException {
-    RegionStateNode regionNode =
-      env.getAssignmentManager().getRegionStates().getRegionStateNode(ri);
-    if (regionNode == null) {
-      throw new UnknownRegionException("No RegionState found for " + ri.getEncodedName());
+    @Override
+    protected void releaseLock(final MasterProcedureEnv env) {
+        env.getProcedureScheduler().wakeTableExclusiveLock(this, getTableName());
     }
-    regionNode.checkOnline();
-  }
+
+    protected User getUser() {
+        return user;
+    }
+
+    protected void setUser(final User user) {
+        this.user = user;
+    }
+
+    protected void releaseSyncLatch() {
+        ProcedurePrepareLatch.releaseLatch(syncLatch, this);
+    }
+
+    /**
+     * Check whether a table is modifiable - exists and either offline or online with config set
+     * @param env MasterProcedureEnv
+     */
+    protected void checkTableModifiable(final MasterProcedureEnv env) throws IOException {
+        // Checks whether the table exists
+        if (!env.getMasterServices().getTableDescriptors().exists(getTableName())) {
+            throw new TableNotFoundException(getTableName());
+        }
+    }
+
+    protected final Path getWALRegionDir(MasterProcedureEnv env, RegionInfo region) throws IOException {
+        return CommonFSUtils.getWALRegionDir(env.getMasterConfiguration(), region.getTable(), region.getEncodedName());
+    }
+
+    /**
+     * Check that cluster is up and master is running. Check table is modifiable. If
+     * <code>enabled</code>, check table is enabled else check it is disabled. Call in Procedure
+     * constructor so can pass any exception to caller.
+     * @param enabled If true, check table is enabled and throw exception if not. If false, do the
+     *                inverse. If null, do no table checks.
+     */
+    protected void preflightChecks(MasterProcedureEnv env, Boolean enabled) throws HBaseIOException {
+        MasterServices master = env.getMasterServices();
+        if (!master.isClusterUp()) {
+            throw new HBaseIOException("Cluster not up!");
+        }
+        if (master.isStopping() || master.isStopped()) {
+            throw new HBaseIOException("Master stopping=" + master.isStopping() + ", stopped=" + master.isStopped());
+        }
+        if (enabled == null) {
+            // Don't do any table checks.
+            return;
+        }
+        try {
+            // Checks table exists and is modifiable.
+            checkTableModifiable(env);
+            TableName tn = getTableName();
+            org.zlab.ocov.tracker.Runtime.update(tn, 788, env, enabled);
+            TableStateManager tsm = master.getTableStateManager();
+            TableState ts = tsm.getTableState(tn);
+            if (enabled) {
+                if (!ts.isEnabledOrEnabling()) {
+                    throw new TableNotEnabledException(tn);
+                }
+            } else {
+                if (!ts.isDisabledOrDisabling()) {
+                    throw new TableNotDisabledException(tn);
+                }
+            }
+        } catch (IOException ioe) {
+            if (ioe instanceof HBaseIOException) {
+                throw (HBaseIOException) ioe;
+            }
+            throw new HBaseIOException(ioe);
+        }
+    }
+
+    protected boolean isTableEnabled(MasterProcedureEnv env) {
+        return env.getMasterServices().getTableStateManager().isTableState(((org.apache.hadoop.hbase.TableName) org.zlab.ocov.tracker.Runtime.update(getTableName(), 773, env)), TableState.State.ENABLED);
+    }
+
+    /**
+     * Check region is online.
+     */
+    protected static void checkOnline(MasterProcedureEnv env, RegionInfo ri) throws DoNotRetryRegionException {
+        RegionStateNode regionNode = env.getAssignmentManager().getRegionStates().getRegionStateNode(ri);
+        if (regionNode == null) {
+            throw new UnknownRegionException("No RegionState found for " + ri.getEncodedName());
+        }
+        regionNode.checkOnline();
+    }
 }

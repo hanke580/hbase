@@ -32,22 +32,22 @@ import org.slf4j.LoggerFactory;
  */
 @InterfaceAudience.Private
 class RegionNormalizerChore extends ScheduledChore {
-  private static final Logger LOG = LoggerFactory.getLogger(RegionNormalizerChore.class);
 
-  private final MasterServices master;
+    private static final Logger LOG = LoggerFactory.getLogger(RegionNormalizerChore.class);
 
-  public RegionNormalizerChore(MasterServices master) {
-    super(master.getServerName() + "-RegionNormalizerChore", master,
-      master.getConfiguration().getInt("hbase.normalizer.period", 300_000));
-    this.master = master;
-  }
+    private final MasterServices master;
 
-  @Override
-  protected void chore() {
-    try {
-      master.normalizeRegions(new NormalizeTableFilterParams.Builder().build(), false);
-    } catch (IOException e) {
-      LOG.error("Failed to normalize regions.", e);
+    public RegionNormalizerChore(MasterServices master) {
+        super(master.getServerName() + "-RegionNormalizerChore", master, master.getConfiguration().getInt("hbase.normalizer.period", 300_000));
+        this.master = master;
     }
-  }
+
+    @Override
+    protected void chore() {
+        try {
+            master.normalizeRegions(new NormalizeTableFilterParams.Builder().build(), false);
+        } catch (IOException e) {
+            LOG.error("Failed to normalize regions.", e);
+        }
+    }
 }

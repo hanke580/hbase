@@ -36,82 +36,76 @@ import org.apache.yetus.audience.InterfaceAudience;
 @InterfaceAudience.Private
 public class NoOpDataBlockEncoder implements HFileDataBlockEncoder {
 
-  public static final NoOpDataBlockEncoder INSTANCE = new NoOpDataBlockEncoder();
+    public static final NoOpDataBlockEncoder INSTANCE = new NoOpDataBlockEncoder();
 
-  private static class NoneEncodingState extends EncodingState {
-    NoneEncoder encoder = null;
-  }
+    private static class NoneEncodingState extends EncodingState {
 
-  /** Cannot be instantiated. Use {@link #INSTANCE} instead. */
-  private NoOpDataBlockEncoder() {
-  }
-
-  @Override
-  public void encode(Cell cell, HFileBlockEncodingContext encodingCtx, DataOutputStream out)
-    throws IOException {
-    NoneEncodingState state = (NoneEncodingState) encodingCtx.getEncodingState();
-    NoneEncoder encoder = state.encoder;
-    int size = encoder.write(cell);
-    state.postCellEncode(size, size);
-  }
-
-  @Override
-  public boolean useEncodedScanner() {
-    return false;
-  }
-
-  @Override
-  public void saveMetadata(HFile.Writer writer) {
-  }
-
-  @Override
-  public DataBlockEncoding getDataBlockEncoding() {
-    return DataBlockEncoding.NONE;
-  }
-
-  @Override
-  public DataBlockEncoding getEffectiveEncodingInCache(boolean isCompaction) {
-    return DataBlockEncoding.NONE;
-  }
-
-  @Override
-  public String toString() {
-    return getClass().getSimpleName();
-  }
-
-  @Override
-  public HFileBlockEncodingContext newDataBlockEncodingContext(Configuration conf,
-    byte[] dummyHeader, HFileContext meta) {
-    return new HFileBlockDefaultEncodingContext(conf, null, dummyHeader, meta);
-  }
-
-  @Override
-  public HFileBlockDecodingContext newDataBlockDecodingContext(Configuration conf,
-    HFileContext meta) {
-    return new HFileBlockDefaultDecodingContext(conf, meta);
-  }
-
-  @Override
-  public void startBlockEncoding(HFileBlockEncodingContext blkEncodingCtx, DataOutputStream out)
-    throws IOException {
-    if (blkEncodingCtx.getClass() != HFileBlockDefaultEncodingContext.class) {
-      throw new IOException(this.getClass().getName() + " only accepts "
-        + HFileBlockDefaultEncodingContext.class.getName() + " as the " + "encoding context.");
+        NoneEncoder encoder = null;
     }
 
-    HFileBlockDefaultEncodingContext encodingCtx =
-      (HFileBlockDefaultEncodingContext) blkEncodingCtx;
-    encodingCtx.prepareEncoding(out);
+    /**
+     * Cannot be instantiated. Use {@link #INSTANCE} instead.
+     */
+    private NoOpDataBlockEncoder() {
+    }
 
-    NoneEncoder encoder = new NoneEncoder(out, encodingCtx);
-    NoneEncodingState state = new NoneEncodingState();
-    state.encoder = encoder;
-    blkEncodingCtx.setEncodingState(state);
-  }
+    @Override
+    public void encode(Cell cell, HFileBlockEncodingContext encodingCtx, DataOutputStream out) throws IOException {
+        NoneEncodingState state = (NoneEncodingState) encodingCtx.getEncodingState();
+        NoneEncoder encoder = state.encoder;
+        int size = encoder.write(cell);
+        state.postCellEncode(size, size);
+    }
 
-  @Override
-  public void endBlockEncoding(HFileBlockEncodingContext encodingCtx, DataOutputStream out,
-    byte[] uncompressedBytesWithHeader, BlockType blockType) throws IOException {
-    encodingCtx.postEncoding(BlockType.DATA);
-  }
+    @Override
+    public boolean useEncodedScanner() {
+        return false;
+    }
+
+    @Override
+    public void saveMetadata(HFile.Writer writer) {
+    }
+
+    @Override
+    public DataBlockEncoding getDataBlockEncoding() {
+        return DataBlockEncoding.NONE;
+    }
+
+    @Override
+    public DataBlockEncoding getEffectiveEncodingInCache(boolean isCompaction) {
+        return DataBlockEncoding.NONE;
+    }
+
+    @Override
+    public String toString() {
+        return getClass().getSimpleName();
+    }
+
+    @Override
+    public HFileBlockEncodingContext newDataBlockEncodingContext(Configuration conf, byte[] dummyHeader, HFileContext meta) {
+        return new HFileBlockDefaultEncodingContext(conf, null, dummyHeader, meta);
+    }
+
+    @Override
+    public HFileBlockDecodingContext newDataBlockDecodingContext(Configuration conf, HFileContext meta) {
+        return new HFileBlockDefaultDecodingContext(conf, meta);
+    }
+
+    @Override
+    public void startBlockEncoding(HFileBlockEncodingContext blkEncodingCtx, DataOutputStream out) throws IOException {
+        if (blkEncodingCtx.getClass() != HFileBlockDefaultEncodingContext.class) {
+            throw new IOException(this.getClass().getName() + " only accepts " + HFileBlockDefaultEncodingContext.class.getName() + " as the " + "encoding context.");
+        }
+        HFileBlockDefaultEncodingContext encodingCtx = (HFileBlockDefaultEncodingContext) blkEncodingCtx;
+        encodingCtx.prepareEncoding(out);
+        NoneEncoder encoder = new NoneEncoder(out, encodingCtx);
+        NoneEncodingState state = new NoneEncodingState();
+        state.encoder = encoder;
+        blkEncodingCtx.setEncodingState(state);
+    }
+
+    @Override
+    public void endBlockEncoding(HFileBlockEncodingContext encodingCtx, DataOutputStream out, byte[] uncompressedBytesWithHeader, BlockType blockType) throws IOException {
+        encodingCtx.postEncoding(BlockType.DATA);
+    }
 }

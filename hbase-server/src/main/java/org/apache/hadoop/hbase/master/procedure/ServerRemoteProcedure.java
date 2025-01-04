@@ -29,11 +29,10 @@ import org.apache.hadoop.hbase.procedure2.RemoteProcedureException;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos;
 
 @InterfaceAudience.Private
-/**
+public abstract class /**
  * The base class for Procedures that run {@link java.util.concurrent.Callable}s on a (remote)
  * RegionServer; e.g. asking a RegionServer to split a WAL file as a sub-procedure of the
  * ServerCrashProcedure recovery process.
@@ -75,80 +74,76 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos;
  * operation failed and require to resend it to another server, set succ to true and upper layer
  * should be able to find out this operation not work and send a operation to another server.
  */
-public abstract class ServerRemoteProcedure extends Procedure<MasterProcedureEnv>
-  implements RemoteProcedureDispatcher.RemoteProcedure<MasterProcedureEnv, ServerName> {
-  protected static final Logger LOG = LoggerFactory.getLogger(ServerRemoteProcedure.class);
-  protected ProcedureEvent<?> event;
-  protected ServerName targetServer;
-  // after remoteProcedureDone we require error field to decide the next state
-  protected Throwable remoteError;
-  protected MasterProcedureProtos.ServerRemoteProcedureState state =
-    MasterProcedureProtos.ServerRemoteProcedureState.SERVER_REMOTE_PROCEDURE_DISPATCH;
+ServerRemoteProcedure extends Procedure<MasterProcedureEnv> implements RemoteProcedureDispatcher.RemoteProcedure<MasterProcedureEnv, ServerName> {
 
-  protected abstract boolean complete(MasterProcedureEnv env, Throwable error);
+    protected static final Logger LOG = LoggerFactory.getLogger(ServerRemoteProcedure.class);
 
-  @Override
-  protected synchronized Procedure<MasterProcedureEnv>[] execute(MasterProcedureEnv env)
-    throws ProcedureYieldException, ProcedureSuspendedException, InterruptedException {
-    if (
-      state != MasterProcedureProtos.ServerRemoteProcedureState.SERVER_REMOTE_PROCEDURE_DISPATCH
-    ) {
-      if (complete(env, this.remoteError)) {
-        return null;
-      }
-      state = MasterProcedureProtos.ServerRemoteProcedureState.SERVER_REMOTE_PROCEDURE_DISPATCH;
+    protected ProcedureEvent<?> event;
+
+    protected ServerName targetServer;
+
+    // after remoteProcedureDone we require error field to decide the next state
+    protected Throwable remoteError;
+
+    protected MasterProcedureProtos.ServerRemoteProcedureState state = MasterProcedureProtos.ServerRemoteProcedureState.SERVER_REMOTE_PROCEDURE_DISPATCH;
+
+    protected abstract boolean complete(MasterProcedureEnv env, Throwable error);
+
+    @Override
+    protected synchronized Procedure<MasterProcedureEnv>[] execute(MasterProcedureEnv env) throws ProcedureYieldException, ProcedureSuspendedException, InterruptedException {
+        if (state != MasterProcedureProtos.ServerRemoteProcedureState.SERVER_REMOTE_PROCEDURE_DISPATCH) {
+            if (complete(env, this.remoteError)) {
+                return null;
+            }
+            state = MasterProcedureProtos.ServerRemoteProcedureState.SERVER_REMOTE_PROCEDURE_DISPATCH;
+        }
+        try {
+            env.getRemoteDispatcher().addOperationToNode(targetServer, this);
+        } catch (FailedRemoteDispatchException frde) {
+            LOG.warn("Can not send remote operation {} to {}, this operation will " + "be retried to send to another server", this.getProcId(), targetServer);
+            return null;
+        }
+        event = new ProcedureEvent<>(this);
+        event.suspendIfNotReady(this);
+        throw new ProcedureSuspendedException();
     }
-    try {
-      env.getRemoteDispatcher().addOperationToNode(targetServer, this);
-    } catch (FailedRemoteDispatchException frde) {
-      LOG.warn("Can not send remote operation {} to {}, this operation will "
-        + "be retried to send to another server", this.getProcId(), targetServer);
-      return null;
+
+    @Override
+    protected synchronized void completionCleanup(MasterProcedureEnv env) {
+        env.getRemoteDispatcher().removeCompletedOperation(targetServer, this);
     }
-    event = new ProcedureEvent<>(this);
-    event.suspendIfNotReady(this);
-    throw new ProcedureSuspendedException();
-  }
 
-  @Override
-  protected synchronized void completionCleanup(MasterProcedureEnv env) {
-    env.getRemoteDispatcher().removeCompletedOperation(targetServer, this);
-  }
-
-  @Override
-  public synchronized void remoteCallFailed(MasterProcedureEnv env, ServerName serverName,
-    IOException exception) {
-    state = MasterProcedureProtos.ServerRemoteProcedureState.SERVER_REMOTE_PROCEDURE_DISPATCH_FAIL;
-    remoteOperationDone(env, exception);
-  }
-
-  @Override
-  public synchronized void remoteOperationCompleted(MasterProcedureEnv env) {
-    state = MasterProcedureProtos.ServerRemoteProcedureState.SERVER_REMOTE_PROCEDURE_REPORT_SUCCEED;
-    remoteOperationDone(env, null);
-  }
-
-  @Override
-  public synchronized void remoteOperationFailed(MasterProcedureEnv env,
-    RemoteProcedureException error) {
-    state = MasterProcedureProtos.ServerRemoteProcedureState.SERVER_REMOTE_PROCEDURE_REPORT_FAILED;
-    remoteOperationDone(env, error);
-  }
-
-  synchronized void remoteOperationDone(MasterProcedureEnv env, Throwable error) {
-    if (this.isFinished()) {
-      LOG.info("This procedure {} is already finished, skip the rest processes", this.getProcId());
-      return;
+    @Override
+    public synchronized void remoteCallFailed(MasterProcedureEnv env, ServerName serverName, IOException exception) {
+        state = MasterProcedureProtos.ServerRemoteProcedureState.SERVER_REMOTE_PROCEDURE_DISPATCH_FAIL;
+        remoteOperationDone(env, exception);
     }
-    if (event == null) {
-      LOG.warn("procedure event for {} is null, maybe the procedure is created when recovery",
-        getProcId());
-      return;
+
+    @Override
+    public synchronized void remoteOperationCompleted(MasterProcedureEnv env) {
+        state = MasterProcedureProtos.ServerRemoteProcedureState.SERVER_REMOTE_PROCEDURE_REPORT_SUCCEED;
+        remoteOperationDone(env, null);
     }
-    this.remoteError = error;
-    // below persistence is added so that if report goes to last active master, it throws exception
-    env.getMasterServices().getMasterProcedureExecutor().getStore().update(this);
-    event.wake(env.getProcedureScheduler());
-    event = null;
-  }
+
+    @Override
+    public synchronized void remoteOperationFailed(MasterProcedureEnv env, RemoteProcedureException error) {
+        state = MasterProcedureProtos.ServerRemoteProcedureState.SERVER_REMOTE_PROCEDURE_REPORT_FAILED;
+        remoteOperationDone(env, error);
+    }
+
+    synchronized void remoteOperationDone(MasterProcedureEnv env, Throwable error) {
+        if (this.isFinished()) {
+            LOG.info("This procedure {} is already finished, skip the rest processes", this.getProcId());
+            return;
+        }
+        if (event == null) {
+            LOG.warn("procedure event for {} is null, maybe the procedure is created when recovery", getProcId());
+            return;
+        }
+        this.remoteError = error;
+        // below persistence is added so that if report goes to last active master, it throws exception
+        env.getMasterServices().getMasterProcedureExecutor().getStore().update(this);
+        event.wake(env.getProcedureScheduler());
+        event = null;
+    }
 }

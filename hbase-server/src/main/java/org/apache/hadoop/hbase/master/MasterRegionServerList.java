@@ -52,60 +52,53 @@ import org.slf4j.LoggerFactory;
 @InterfaceAudience.Private
 public class MasterRegionServerList implements RegionServerList {
 
-  private static final Logger LOG = LoggerFactory.getLogger(MasterRegionServerList.class);
+    private static final Logger LOG = LoggerFactory.getLogger(MasterRegionServerList.class);
 
-  private final MasterRegion region;
+    private final MasterRegion region;
 
-  private final Abortable abortable;
+    private final Abortable abortable;
 
-  public MasterRegionServerList(MasterRegion region, Abortable abortable) {
-    this.region = region;
-    this.abortable = abortable;
-  }
-
-  @Override
-  public void started(ServerName sn) {
-    Put put =
-      new Put(Bytes.toBytes(sn.getServerName())).addColumn(MasterRegionFactory.REGION_SERVER_FAMILY,
-        HConstants.STATE_QUALIFIER, Bytes.toBytes(ServerState.ONLINE.name()));
-    try {
-      region.update(r -> r.put(put));
-    } catch (IOException e) {
-      LOG.error(HBaseMarkers.FATAL, "Failed to record region server {} as started, aborting...", sn,
-        e);
-      abortable.abort("Failed to record region server as started");
-      throw new UncheckedIOException(e);
+    public MasterRegionServerList(MasterRegion region, Abortable abortable) {
+        this.region = region;
+        this.abortable = abortable;
     }
-  }
 
-  @Override
-  public void expired(ServerName sn) {
-    Delete delete = new Delete(Bytes.toBytes(sn.getServerName()))
-      .addFamily(MasterRegionFactory.REGION_SERVER_FAMILY);
-    try {
-      region.update(r -> r.delete(delete));
-    } catch (IOException e) {
-      LOG.error(HBaseMarkers.FATAL, "Failed to record region server {} as expired, aborting...", sn,
-        e);
-      abortable.abort("Failed to record region server as expired");
-      throw new UncheckedIOException(e);
-    }
-  }
-
-  @Override
-  public Set<ServerName> getAll() throws IOException {
-    Set<ServerName> rsList = new HashSet<>();
-    try (ResultScanner scanner =
-      region.getScanner(new Scan().addFamily(MasterRegionFactory.REGION_SERVER_FAMILY))) {
-      for (;;) {
-        Result result = scanner.next();
-        if (result == null) {
-          break;
+    @Override
+    public void started(ServerName sn) {
+        Put put = new Put(Bytes.toBytes(sn.getServerName())).addColumn(MasterRegionFactory.REGION_SERVER_FAMILY, HConstants.STATE_QUALIFIER, Bytes.toBytes(ServerState.ONLINE.name()));
+        try {
+            region.update(r -> r.put(put));
+        } catch (IOException e) {
+            LOG.error(HBaseMarkers.FATAL, "Failed to record region server {} as started, aborting...", sn, e);
+            abortable.abort("Failed to record region server as started");
+            throw new UncheckedIOException(e);
         }
-        rsList.add(ServerName.valueOf(Bytes.toString(result.getRow())));
-      }
     }
-    return rsList;
-  }
 
+    @Override
+    public void expired(ServerName sn) {
+        Delete delete = new Delete(Bytes.toBytes(sn.getServerName())).addFamily(MasterRegionFactory.REGION_SERVER_FAMILY);
+        try {
+            region.update(r -> r.delete(delete));
+        } catch (IOException e) {
+            LOG.error(HBaseMarkers.FATAL, "Failed to record region server {} as expired, aborting...", sn, e);
+            abortable.abort("Failed to record region server as expired");
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    @Override
+    public Set<ServerName> getAll() throws IOException {
+        Set<ServerName> rsList = new HashSet<>();
+        try (ResultScanner scanner = region.getScanner(((Scan) org.zlab.ocov.tracker.Runtime.update(new Scan(), 702)).addFamily(MasterRegionFactory.REGION_SERVER_FAMILY))) {
+            for (; ; ) {
+                Result result = scanner.next();
+                if (result == null) {
+                    break;
+                }
+                rsList.add(ServerName.valueOf(Bytes.toString(result.getRow())));
+            }
+        }
+        return rsList;
+    }
 }

@@ -24,70 +24,68 @@ import org.apache.hadoop.hbase.master.procedure.ProcedurePrepareLatch;
 import org.apache.hadoop.hbase.procedure2.ProcedureStateSerializer;
 import org.apache.hadoop.hbase.procedure2.StateMachineProcedure;
 import org.apache.yetus.audience.InterfaceAudience;
-
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.PeerProcedureStateData;
 
 /**
  * The base class for all replication peer related procedure.
  */
 @InterfaceAudience.Private
-public abstract class AbstractPeerProcedure<TState>
-  extends StateMachineProcedure<MasterProcedureEnv, TState> implements PeerProcedureInterface {
+public abstract class AbstractPeerProcedure<TState> extends StateMachineProcedure<MasterProcedureEnv, TState> implements PeerProcedureInterface {
 
-  protected String peerId;
+    protected String peerId;
 
-  // used to keep compatible with old client where we can only return after updateStorage.
-  protected ProcedurePrepareLatch latch;
+    // used to keep compatible with old client where we can only return after updateStorage.
+    protected ProcedurePrepareLatch latch;
 
-  protected AbstractPeerProcedure() {
-  }
-
-  protected AbstractPeerProcedure(String peerId) {
-    this.peerId = peerId;
-    this.latch = ProcedurePrepareLatch.createLatch(2, 0);
-  }
-
-  public ProcedurePrepareLatch getLatch() {
-    return latch;
-  }
-
-  @Override
-  public String getPeerId() {
-    return peerId;
-  }
-
-  @Override
-  protected boolean waitInitialized(MasterProcedureEnv env) {
-    return env.waitInitialized(this);
-  }
-
-  @Override
-  protected LockState acquireLock(MasterProcedureEnv env) {
-    if (env.getProcedureScheduler().waitPeerExclusiveLock(this, peerId)) {
-      return LockState.LOCK_EVENT_WAIT;
+    protected AbstractPeerProcedure() {
     }
-    return LockState.LOCK_ACQUIRED;
-  }
 
-  @Override
-  protected void releaseLock(MasterProcedureEnv env) {
-    env.getProcedureScheduler().wakePeerExclusiveLock(this, peerId);
-  }
+    protected AbstractPeerProcedure(String peerId) {
+        this.peerId = peerId;
+        this.latch = ProcedurePrepareLatch.createLatch(2, 0);
+    }
 
-  @Override
-  protected boolean holdLock(MasterProcedureEnv env) {
-    return true;
-  }
+    public ProcedurePrepareLatch getLatch() {
+        return latch;
+    }
 
-  @Override
-  protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    super.serializeStateData(serializer);
-    serializer.serialize(PeerProcedureStateData.newBuilder().setPeerId(peerId).build());
-  }
+    @Override
+    public String getPeerId() {
+        return peerId;
+    }
 
-  @Override
-  protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    super.deserializeStateData(serializer);
-    peerId = serializer.deserialize(PeerProcedureStateData.class).getPeerId();
-  }
+    @Override
+    protected boolean waitInitialized(MasterProcedureEnv env) {
+        return env.waitInitialized(this);
+    }
+
+    @Override
+    protected LockState acquireLock(MasterProcedureEnv env) {
+        if (env.getProcedureScheduler().waitPeerExclusiveLock(this, peerId)) {
+            return LockState.LOCK_EVENT_WAIT;
+        }
+        return LockState.LOCK_ACQUIRED;
+    }
+
+    @Override
+    protected void releaseLock(MasterProcedureEnv env) {
+        env.getProcedureScheduler().wakePeerExclusiveLock(this, peerId);
+    }
+
+    @Override
+    protected boolean holdLock(MasterProcedureEnv env) {
+        return true;
+    }
+
+    @Override
+    protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        super.serializeStateData(serializer);
+        serializer.serialize(((org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.PeerProcedureStateData) org.zlab.ocov.tracker.Runtime.update(PeerProcedureStateData.newBuilder().setPeerId(peerId).build(), 168, serializer)));
+    }
+
+    @Override
+    protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        super.deserializeStateData(serializer);
+        peerId = serializer.deserialize(PeerProcedureStateData.class).getPeerId();
+    }
 }

@@ -33,7 +33,6 @@ import org.apache.hadoop.io.MultipleIOException;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hbase.thirdparty.com.google.common.collect.Lists;
 
 /**
@@ -45,113 +44,113 @@ import org.apache.hbase.thirdparty.com.google.common.collect.Lists;
  */
 @InterfaceAudience.Private
 class RecoveredEditsOutputSink extends AbstractRecoveredEditsOutputSink {
-  private static final Logger LOG = LoggerFactory.getLogger(RecoveredEditsOutputSink.class);
-  private ConcurrentMap<String, RecoveredEditsWriter> writers = new ConcurrentHashMap<>();
 
-  public RecoveredEditsOutputSink(WALSplitter walSplitter,
-    WALSplitter.PipelineController controller, EntryBuffers entryBuffers, int numWriters) {
-    super(walSplitter, controller, entryBuffers, numWriters);
-  }
+    private static final Logger LOG = LoggerFactory.getLogger(RecoveredEditsOutputSink.class);
 
-  @Override
-  public void append(EntryBuffers.RegionEntryBuffer buffer) throws IOException {
-    List<WAL.Entry> entries = buffer.entries;
-    if (entries.isEmpty()) {
-      LOG.warn("got an empty buffer, skipping");
-      return;
-    }
-    RecoveredEditsWriter writer = getRecoveredEditsWriter(buffer.tableName,
-      buffer.encodedRegionName, entries.get(0).getKey().getSequenceId());
-    if (writer != null) {
-      writer.writeRegionEntries(entries);
-    }
-  }
+    private ConcurrentMap<String, RecoveredEditsWriter> writers = new ConcurrentHashMap<>();
 
-  /**
-   * Get a writer and path for a log starting at the given entry. This function is threadsafe so
-   * long as multiple threads are always acting on different regions.
-   * @return null if this region shouldn't output any logs
-   */
-  private RecoveredEditsWriter getRecoveredEditsWriter(TableName tableName, byte[] region,
-    long seqId) throws IOException {
-    RecoveredEditsWriter ret = writers.get(Bytes.toString(region));
-    if (ret != null) {
-      return ret;
+    public RecoveredEditsOutputSink(WALSplitter walSplitter, WALSplitter.PipelineController controller, EntryBuffers entryBuffers, int numWriters) {
+        super(walSplitter, controller, entryBuffers, numWriters);
     }
-    ret = createRecoveredEditsWriter(tableName, region, seqId);
-    if (ret == null) {
-      return null;
-    }
-    LOG.trace("Created {}", ret.path);
-    writers.put(Bytes.toString(region), ret);
-    return ret;
-  }
 
-  @Override
-  public List<Path> close() throws IOException {
-    boolean isSuccessful = true;
-    try {
-      isSuccessful = finishWriterThreads(false);
-    } finally {
-      isSuccessful &= closeWriters();
-    }
-    return isSuccessful ? splits : null;
-  }
-
-  /**
-   * Close all of the output streams.
-   * @return true when there is no error.
-   */
-  private boolean closeWriters() throws IOException {
-    List<IOException> thrown = Lists.newArrayList();
-    for (RecoveredEditsWriter writer : writers.values()) {
-      closeCompletionService.submit(() -> {
-        Path dst = closeRecoveredEditsWriter(writer, thrown);
-        LOG.trace("Closed {}", dst);
-        splits.add(dst);
-        return null;
-      });
-    }
-    boolean progressFailed = false;
-    try {
-      for (int i = 0, n = this.writers.size(); i < n; i++) {
-        Future<Void> future = closeCompletionService.take();
-        future.get();
-        if (!progressFailed && reporter != null && !reporter.progress()) {
-          progressFailed = true;
+    @Override
+    public void append(EntryBuffers.RegionEntryBuffer buffer) throws IOException {
+        List<WAL.Entry> entries = buffer.entries;
+        if (entries.isEmpty()) {
+            LOG.warn("got an empty buffer, skipping");
+            return;
         }
-      }
-    } catch (InterruptedException e) {
-      IOException iie = new InterruptedIOException();
-      iie.initCause(e);
-      throw iie;
-    } catch (ExecutionException e) {
-      throw new IOException(e.getCause());
-    } finally {
-      closeThreadPool.shutdownNow();
+        RecoveredEditsWriter writer = getRecoveredEditsWriter(buffer.tableName, buffer.encodedRegionName, entries.get(0).getKey().getSequenceId());
+        org.zlab.ocov.tracker.Runtime.update(writer, 862, buffer);
+        if (writer != null) {
+            writer.writeRegionEntries(entries);
+        }
     }
-    if (!thrown.isEmpty()) {
-      throw MultipleIOException.createIOException(thrown);
+
+    /**
+     * Get a writer and path for a log starting at the given entry. This function is threadsafe so
+     * long as multiple threads are always acting on different regions.
+     * @return null if this region shouldn't output any logs
+     */
+    private RecoveredEditsWriter getRecoveredEditsWriter(TableName tableName, byte[] region, long seqId) throws IOException {
+        RecoveredEditsWriter ret = writers.get(Bytes.toString(region));
+        if (ret != null) {
+            return ret;
+        }
+        ret = createRecoveredEditsWriter(tableName, region, seqId);
+        if (ret == null) {
+            return null;
+        }
+        LOG.trace("Created {}", ret.path);
+        writers.put(Bytes.toString(region), ret);
+        return ret;
     }
-    return !progressFailed;
-  }
 
-  @Override
-  public Map<String, Long> getOutputCounts() {
-    TreeMap<String, Long> ret = new TreeMap<>();
-    for (Map.Entry<String, RecoveredEditsWriter> entry : writers.entrySet()) {
-      ret.put(entry.getKey(), entry.getValue().editsWritten);
+    @Override
+    public List<Path> close() throws IOException {
+        boolean isSuccessful = true;
+        try {
+            isSuccessful = finishWriterThreads(false);
+        } finally {
+            isSuccessful &= closeWriters();
+        }
+        return isSuccessful ? splits : null;
     }
-    return ret;
-  }
 
-  @Override
-  public int getNumberOfRecoveredRegions() {
-    return writers.size();
-  }
+    /**
+     * Close all of the output streams.
+     * @return true when there is no error.
+     */
+    private boolean closeWriters() throws IOException {
+        List<IOException> thrown = Lists.newArrayList();
+        for (RecoveredEditsWriter writer : writers.values()) {
+            closeCompletionService.submit(() -> {
+                Path dst = closeRecoveredEditsWriter(writer, thrown);
+                LOG.trace("Closed {}", dst);
+                splits.add(dst);
+                return null;
+            });
+        }
+        boolean progressFailed = false;
+        try {
+            for (int i = 0, n = this.writers.size(); i < n; i++) {
+                Future<Void> future = closeCompletionService.take();
+                future.get();
+                if (!progressFailed && reporter != null && !reporter.progress()) {
+                    progressFailed = true;
+                }
+            }
+        } catch (InterruptedException e) {
+            IOException iie = new InterruptedIOException();
+            iie.initCause(e);
+            throw iie;
+        } catch (ExecutionException e) {
+            throw new IOException(e.getCause());
+        } finally {
+            closeThreadPool.shutdownNow();
+        }
+        if (!thrown.isEmpty()) {
+            throw MultipleIOException.createIOException(thrown);
+        }
+        return !progressFailed;
+    }
 
-  @Override
-  public int getNumOpenWriters() {
-    return writers.size();
-  }
+    @Override
+    public Map<String, Long> getOutputCounts() {
+        TreeMap<String, Long> ret = new TreeMap<>();
+        for (Map.Entry<String, RecoveredEditsWriter> entry : writers.entrySet()) {
+            ret.put(entry.getKey(), entry.getValue().editsWritten);
+        }
+        return ret;
+    }
+
+    @Override
+    public int getNumberOfRecoveredRegions() {
+        return writers.size();
+    }
+
+    @Override
+    public int getNumOpenWriters() {
+        return writers.size();
+    }
 }

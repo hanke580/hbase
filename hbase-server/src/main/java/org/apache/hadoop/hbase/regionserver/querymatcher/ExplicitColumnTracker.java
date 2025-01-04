@@ -49,206 +49,205 @@ import org.apache.yetus.audience.InterfaceAudience;
 @InterfaceAudience.Private
 public class ExplicitColumnTracker implements ColumnTracker {
 
-  private final int maxVersions;
-  private final int minVersions;
+    private final int maxVersions;
 
-  /**
-   * Contains the list of columns that the ExplicitColumnTracker is tracking. Each ColumnCount
-   * instance also tracks how many versions of the requested column have been returned.
-   */
-  private final ColumnCount[] columns;
-  private int index;
-  private ColumnCount column;
-  /**
-   * Keeps track of the latest timestamp included for current column. Used to eliminate duplicates.
-   */
-  private long latestTSOfCurrentColumn;
-  private long oldestStamp;
+    private final int minVersions;
 
-  /**
-   * Default constructor.
-   * @param columns           columns specified user in query
-   * @param minVersions       minimum number of versions to keep
-   * @param maxVersions       maximum versions to return per column
-   * @param oldestUnexpiredTS the oldest timestamp we are interested in, based on TTL
-   */
-  public ExplicitColumnTracker(NavigableSet<byte[]> columns, int minVersions, int maxVersions,
-    long oldestUnexpiredTS) {
-    this.maxVersions = maxVersions;
-    this.minVersions = minVersions;
-    this.oldestStamp = oldestUnexpiredTS;
-    this.columns = new ColumnCount[columns.size()];
-    int i = 0;
-    for (byte[] column : columns) {
-      this.columns[i++] = new ColumnCount(column);
+    /**
+     * Contains the list of columns that the ExplicitColumnTracker is tracking. Each ColumnCount
+     * instance also tracks how many versions of the requested column have been returned.
+     */
+    private final ColumnCount[] columns;
+
+    private int index;
+
+    private ColumnCount column;
+
+    /**
+     * Keeps track of the latest timestamp included for current column. Used to eliminate duplicates.
+     */
+    private long latestTSOfCurrentColumn;
+
+    private long oldestStamp;
+
+    /**
+     * Default constructor.
+     * @param columns           columns specified user in query
+     * @param minVersions       minimum number of versions to keep
+     * @param maxVersions       maximum versions to return per column
+     * @param oldestUnexpiredTS the oldest timestamp we are interested in, based on TTL
+     */
+    public ExplicitColumnTracker(NavigableSet<byte[]> columns, int minVersions, int maxVersions, long oldestUnexpiredTS) {
+        this.maxVersions = maxVersions;
+        this.minVersions = minVersions;
+        this.oldestStamp = oldestUnexpiredTS;
+        this.columns = new ColumnCount[columns.size()];
+        int i = 0;
+        for (byte[] column : columns) {
+            this.columns[i++] = new ColumnCount(column);
+        }
+        reset();
     }
-    reset();
-  }
 
-  /**
-   * Done when there are no more columns to match against.
-   */
-  @Override
-  public boolean done() {
-    return this.index >= columns.length;
-  }
+    /**
+     * Done when there are no more columns to match against.
+     */
+    @Override
+    public boolean done() {
+        return this.index >= columns.length;
+    }
 
-  @Override
-  public ColumnCount getColumnHint() {
-    return this.column;
-  }
+    @Override
+    public ColumnCount getColumnHint() {
+        return this.column;
+    }
 
-  /**
-   * {@inheritDoc}
-   */
-  @Override
-  public ScanQueryMatcher.MatchCode checkColumn(Cell cell, byte type) {
-    // delete markers should never be passed to an
-    // *Explicit*ColumnTracker
-    assert !PrivateCellUtil.isDelete(type);
-    do {
-      // No more columns left, we are done with this query
-      if (done()) {
-        return ScanQueryMatcher.MatchCode.SEEK_NEXT_ROW; // done_row
-      }
+    /**
+     * {@inheritDoc}
+     */
+    @Override
+    public ScanQueryMatcher.MatchCode checkColumn(Cell cell, byte type) {
+        // delete markers should never be passed to an
+        // *Explicit*ColumnTracker
+        assert !PrivateCellUtil.isDelete(type);
+        do {
+            // No more columns left, we are done with this query
+            if (done()) {
+                // done_row
+                return ScanQueryMatcher.MatchCode.SEEK_NEXT_ROW;
+            }
+            // No more columns to match against, done with storefile
+            if (this.column == null) {
+                // done_row
+                return ScanQueryMatcher.MatchCode.SEEK_NEXT_ROW;
+            }
+            // Compare specific column to current column
+            int ret = CellUtil.compareQualifiers(cell, column.getBuffer(), column.getOffset(), column.getLength());
+            // Column Matches. Return include code. The caller would call checkVersions
+            // to limit the number of versions.
+            if (ret == 0) {
+                return ScanQueryMatcher.MatchCode.INCLUDE;
+            }
+            resetTS();
+            if (ret < 0) {
+                // The current KV is smaller than the column the ExplicitColumnTracker
+                // is interested in, so seek to that column of interest.
+                return ScanQueryMatcher.MatchCode.SEEK_NEXT_COL;
+            }
+            // The current KV is bigger than the column the ExplicitColumnTracker
+            // is interested in. That means there is no more data for the column
+            // of interest. Advance the ExplicitColumnTracker state to next
+            // column of interest, and check again.
+            if (ret > 0) {
+                ++this.index;
+                if (done()) {
+                    // No more to match, do not include, done with this row.
+                    // done_row
+                    return ScanQueryMatcher.MatchCode.SEEK_NEXT_ROW;
+                }
+                // This is the recursive case.
+                this.column = this.columns[this.index];
+            }
+        } while (true);
+    }
 
-      // No more columns to match against, done with storefile
-      if (this.column == null) {
-        return ScanQueryMatcher.MatchCode.SEEK_NEXT_ROW; // done_row
-      }
-
-      // Compare specific column to current column
-      int ret = CellUtil.compareQualifiers(cell, column.getBuffer(), column.getOffset(),
-        column.getLength());
-
-      // Column Matches. Return include code. The caller would call checkVersions
-      // to limit the number of versions.
-      if (ret == 0) {
+    @Override
+    public ScanQueryMatcher.MatchCode checkVersions(Cell cell, long timestamp, byte type, boolean ignoreCount) throws IOException {
+        assert !PrivateCellUtil.isDelete(type);
+        if (ignoreCount) {
+            return ScanQueryMatcher.MatchCode.INCLUDE;
+        }
+        // Check if it is a duplicate timestamp
+        if (sameAsPreviousTS(timestamp)) {
+            // If duplicate, skip this Key
+            return ScanQueryMatcher.MatchCode.SKIP;
+        }
+        int count = this.column.increment();
+        if (count >= maxVersions || (count >= minVersions && isExpired(timestamp))) {
+            // Done with versions for this column
+            ++this.index;
+            resetTS();
+            if (done()) {
+                // We have served all the requested columns.
+                this.column = null;
+                return ScanQueryMatcher.MatchCode.INCLUDE_AND_SEEK_NEXT_ROW;
+            }
+            // We are done with current column; advance to next column
+            // of interest.
+            this.column = this.columns[this.index];
+            return ScanQueryMatcher.MatchCode.INCLUDE_AND_SEEK_NEXT_COL;
+        }
+        setTS(timestamp);
         return ScanQueryMatcher.MatchCode.INCLUDE;
-      }
+    }
 
-      resetTS();
-
-      if (ret < 0) {
-        // The current KV is smaller than the column the ExplicitColumnTracker
-        // is interested in, so seek to that column of interest.
-        return ScanQueryMatcher.MatchCode.SEEK_NEXT_COL;
-      }
-
-      // The current KV is bigger than the column the ExplicitColumnTracker
-      // is interested in. That means there is no more data for the column
-      // of interest. Advance the ExplicitColumnTracker state to next
-      // column of interest, and check again.
-      if (ret > 0) {
-        ++this.index;
-        if (done()) {
-          // No more to match, do not include, done with this row.
-          return ScanQueryMatcher.MatchCode.SEEK_NEXT_ROW; // done_row
-        }
-        // This is the recursive case.
+    // Called between every row.
+    @Override
+    public void reset() {
+        this.index = 0;
         this.column = this.columns[this.index];
-      }
-    } while (true);
-  }
-
-  @Override
-  public ScanQueryMatcher.MatchCode checkVersions(Cell cell, long timestamp, byte type,
-    boolean ignoreCount) throws IOException {
-    assert !PrivateCellUtil.isDelete(type);
-    if (ignoreCount) {
-      return ScanQueryMatcher.MatchCode.INCLUDE;
+        for (ColumnCount col : this.columns) {
+            col.setCount(0);
+        }
+        resetTS();
     }
-    // Check if it is a duplicate timestamp
-    if (sameAsPreviousTS(timestamp)) {
-      // If duplicate, skip this Key
-      return ScanQueryMatcher.MatchCode.SKIP;
+
+    private void resetTS() {
+        latestTSOfCurrentColumn = HConstants.LATEST_TIMESTAMP;
     }
-    int count = this.column.increment();
-    if (count >= maxVersions || (count >= minVersions && isExpired(timestamp))) {
-      // Done with versions for this column
-      ++this.index;
-      resetTS();
-      if (done()) {
-        // We have served all the requested columns.
-        this.column = null;
-        return ScanQueryMatcher.MatchCode.INCLUDE_AND_SEEK_NEXT_ROW;
-      }
-      // We are done with current column; advance to next column
-      // of interest.
-      this.column = this.columns[this.index];
-      return ScanQueryMatcher.MatchCode.INCLUDE_AND_SEEK_NEXT_COL;
+
+    private void setTS(long timestamp) {
+        latestTSOfCurrentColumn = timestamp;
     }
-    setTS(timestamp);
-    return ScanQueryMatcher.MatchCode.INCLUDE;
-  }
 
-  // Called between every row.
-  @Override
-  public void reset() {
-    this.index = 0;
-    this.column = this.columns[this.index];
-    for (ColumnCount col : this.columns) {
-      col.setCount(0);
+    private boolean sameAsPreviousTS(long timestamp) {
+        return timestamp == latestTSOfCurrentColumn;
     }
-    resetTS();
-  }
 
-  private void resetTS() {
-    latestTSOfCurrentColumn = HConstants.LATEST_TIMESTAMP;
-  }
+    private boolean isExpired(long timestamp) {
+        return timestamp < oldestStamp;
+    }
 
-  private void setTS(long timestamp) {
-    latestTSOfCurrentColumn = timestamp;
-  }
+    @Override
+    public void doneWithColumn(Cell cell) {
+        while (this.column != null) {
+            int compare = CellUtil.compareQualifiers(cell, column.getBuffer(), column.getOffset(), column.getLength());
+            resetTS();
+            if (compare >= 0) {
+                ++this.index;
+                if (done()) {
+                    // Will not hit any more columns in this storefile
+                    this.column = null;
+                    org.zlab.ocov.tracker.Runtime.update(this, 265, cell);
+                } else {
+                    this.column = this.columns[this.index];
+                    org.zlab.ocov.tracker.Runtime.update(this, 264, cell);
+                }
+                if (compare > 0) {
+                    continue;
+                }
+            }
+            return;
+        }
+    }
 
-  private boolean sameAsPreviousTS(long timestamp) {
-    return timestamp == latestTSOfCurrentColumn;
-  }
-
-  private boolean isExpired(long timestamp) {
-    return timestamp < oldestStamp;
-  }
-
-  @Override
-  public void doneWithColumn(Cell cell) {
-    while (this.column != null) {
-      int compare = CellUtil.compareQualifiers(cell, column.getBuffer(), column.getOffset(),
-        column.getLength());
-      resetTS();
-      if (compare >= 0) {
-        ++this.index;
-        if (done()) {
-          // Will not hit any more columns in this storefile
-          this.column = null;
+    @Override
+    public MatchCode getNextRowOrNextColumn(Cell cell) {
+        doneWithColumn(cell);
+        if (getColumnHint() == null) {
+            return MatchCode.SEEK_NEXT_ROW;
         } else {
-          this.column = this.columns[this.index];
+            return MatchCode.SEEK_NEXT_COL;
         }
-        if (compare > 0) {
-          continue;
-        }
-      }
-      return;
     }
-  }
 
-  @Override
-  public MatchCode getNextRowOrNextColumn(Cell cell) {
-    doneWithColumn(cell);
-
-    if (getColumnHint() == null) {
-      return MatchCode.SEEK_NEXT_ROW;
-    } else {
-      return MatchCode.SEEK_NEXT_COL;
+    @Override
+    public boolean isDone(long timestamp) {
+        return minVersions <= 0 && isExpired(timestamp);
     }
-  }
 
-  @Override
-  public boolean isDone(long timestamp) {
-    return minVersions <= 0 && isExpired(timestamp);
-  }
-
-  @Override
-  public void beforeShipped() throws IOException {
-    // do nothing
-  }
+    @Override
+    public void beforeShipped() throws IOException {
+        // do nothing
+    }
 }

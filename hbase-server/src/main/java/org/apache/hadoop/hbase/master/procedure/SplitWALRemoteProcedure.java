@@ -30,7 +30,6 @@ import org.apache.hadoop.hbase.wal.AbstractFSWALProvider;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hadoop.hbase.shaded.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.ErrorHandlingProtos;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos;
@@ -42,117 +41,112 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos;
  * success.
  */
 @InterfaceAudience.Private
-public class SplitWALRemoteProcedure extends ServerRemoteProcedure
-  implements ServerProcedureInterface {
-  private static final Logger LOG = LoggerFactory.getLogger(SplitWALRemoteProcedure.class);
-  private String walPath;
-  private ServerName crashedServer;
+public class SplitWALRemoteProcedure extends ServerRemoteProcedure implements ServerProcedureInterface {
 
-  public SplitWALRemoteProcedure() {
-  }
+    private static final Logger LOG = LoggerFactory.getLogger(SplitWALRemoteProcedure.class);
 
-  public SplitWALRemoteProcedure(ServerName worker, ServerName crashedServer, String wal) {
-    this.targetServer = worker;
-    this.crashedServer = crashedServer;
-    this.walPath = wal;
-  }
+    private String walPath;
 
-  @Override
-  protected void rollback(MasterProcedureEnv env) throws IOException, InterruptedException {
-    throw new UnsupportedOperationException();
-  }
+    private ServerName crashedServer;
 
-  @Override
-  protected boolean abort(MasterProcedureEnv env) {
-    return false;
-  }
-
-  @Override
-  protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    MasterProcedureProtos.SplitWALRemoteData.Builder builder =
-      MasterProcedureProtos.SplitWALRemoteData.newBuilder();
-    builder.setWalPath(walPath).setWorker(ProtobufUtil.toServerName(targetServer))
-      .setCrashedServer(ProtobufUtil.toServerName(crashedServer)).setState(state);
-    if (this.remoteError != null) {
-      ErrorHandlingProtos.ForeignExceptionMessage fem =
-        ForeignExceptionUtil.toProtoForeignException(remoteError);
-      builder.setError(fem);
+    public SplitWALRemoteProcedure() {
     }
-    serializer.serialize(builder.build());
-  }
 
-  @Override
-  protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    MasterProcedureProtos.SplitWALRemoteData data =
-      serializer.deserialize(MasterProcedureProtos.SplitWALRemoteData.class);
-    walPath = data.getWalPath();
-    targetServer = ProtobufUtil.toServerName(data.getWorker());
-    crashedServer = ProtobufUtil.toServerName(data.getCrashedServer());
-    state = data.getState();
-    if (data.hasError()) {
-      this.remoteError = ForeignExceptionUtil.toException(data.getError());
+    public SplitWALRemoteProcedure(ServerName worker, ServerName crashedServer, String wal) {
+        this.targetServer = worker;
+        this.crashedServer = crashedServer;
+        this.walPath = wal;
     }
-  }
 
-  @Override
-  public Optional<RemoteProcedureDispatcher.RemoteOperation> remoteCallBuild(MasterProcedureEnv env,
-    ServerName serverName) {
-    return Optional.of(new RSProcedureDispatcher.ServerOperation(this, getProcId(),
-      SplitWALCallable.class, MasterProcedureProtos.SplitWALParameter.newBuilder()
-        .setWalPath(walPath).build().toByteArray()));
-  }
+    @Override
+    protected void rollback(MasterProcedureEnv env) throws IOException, InterruptedException {
+        throw new UnsupportedOperationException();
+    }
 
-  @Override
-  protected boolean complete(MasterProcedureEnv env, Throwable error) {
-    if (error == null) {
-      try {
-        env.getMasterServices().getSplitWALManager().archive(walPath);
-      } catch (IOException e) {
-        LOG.warn("Failed split of {}; ignore...", walPath, e);
-      }
-      return true;
-    } else {
-      if (error instanceof DoNotRetryIOException) {
-        LOG.warn("Sent {} to wrong server {}, try another", walPath, targetServer, error);
-        return true;
-      } else {
-        LOG.warn("Failed split of {}, retry...", walPath, error);
+    @Override
+    protected boolean abort(MasterProcedureEnv env) {
         return false;
-      }
     }
-  }
 
-  public String getWAL() {
-    return this.walPath;
-  }
-
-  @Override
-  public ServerName getServerName() {
-    // return the crashed server is to use the queue of root ServerCrashProcedure
-    return this.crashedServer;
-  }
-
-  @Override
-  public boolean hasMetaTableRegion() {
-    return AbstractFSWALProvider.isMetaFile(new Path(walPath));
-  }
-
-  @Override
-  public ServerOperationType getServerOperationType() {
-    return ServerOperationType.SPLIT_WAL_REMOTE;
-  }
-
-  @Override
-  protected void toStringClassDetails(StringBuilder builder) {
-    builder.append(getProcName());
-    if (this.targetServer != null) {
-      builder.append(", worker=");
-      builder.append(this.targetServer);
+    @Override
+    protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        MasterProcedureProtos.SplitWALRemoteData.Builder builder = MasterProcedureProtos.SplitWALRemoteData.newBuilder();
+        builder.setWalPath(walPath).setWorker(ProtobufUtil.toServerName(targetServer)).setCrashedServer(ProtobufUtil.toServerName(crashedServer)).setState(state);
+        if (this.remoteError != null) {
+            ErrorHandlingProtos.ForeignExceptionMessage fem = ForeignExceptionUtil.toProtoForeignException(remoteError);
+            builder.setError(fem);
+        }
+        serializer.serialize(((org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.SplitWALRemoteData) org.zlab.ocov.tracker.Runtime.update(builder.build(), 450, serializer)));
     }
-  }
 
-  @Override
-  public String getProcName() {
-    return getClass().getSimpleName() + " " + SplitWALProcedure.getWALNameFromStrPath(getWAL());
-  }
+    @Override
+    protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        MasterProcedureProtos.SplitWALRemoteData data = serializer.deserialize(MasterProcedureProtos.SplitWALRemoteData.class);
+        walPath = data.getWalPath();
+        targetServer = ProtobufUtil.toServerName(data.getWorker());
+        crashedServer = ProtobufUtil.toServerName(data.getCrashedServer());
+        state = data.getState();
+        if (data.hasError()) {
+            this.remoteError = ForeignExceptionUtil.toException(data.getError());
+        }
+    }
+
+    @Override
+    public Optional<RemoteProcedureDispatcher.RemoteOperation> remoteCallBuild(MasterProcedureEnv env, ServerName serverName) {
+        return Optional.of(new RSProcedureDispatcher.ServerOperation(this, getProcId(), SplitWALCallable.class, MasterProcedureProtos.SplitWALParameter.newBuilder().setWalPath(walPath).build().toByteArray()));
+    }
+
+    @Override
+    protected boolean complete(MasterProcedureEnv env, Throwable error) {
+        if (error == null) {
+            try {
+                env.getMasterServices().getSplitWALManager().archive(walPath);
+            } catch (IOException e) {
+                LOG.warn("Failed split of {}; ignore...", walPath, e);
+            }
+            return true;
+        } else {
+            if (error instanceof DoNotRetryIOException) {
+                LOG.warn("Sent {} to wrong server {}, try another", walPath, targetServer, error);
+                return true;
+            } else {
+                LOG.warn("Failed split of {}, retry...", walPath, error);
+                return false;
+            }
+        }
+    }
+
+    public String getWAL() {
+        return this.walPath;
+    }
+
+    @Override
+    public ServerName getServerName() {
+        // return the crashed server is to use the queue of root ServerCrashProcedure
+        return this.crashedServer;
+    }
+
+    @Override
+    public boolean hasMetaTableRegion() {
+        return AbstractFSWALProvider.isMetaFile(new Path(walPath));
+    }
+
+    @Override
+    public ServerOperationType getServerOperationType() {
+        return ServerOperationType.SPLIT_WAL_REMOTE;
+    }
+
+    @Override
+    protected void toStringClassDetails(StringBuilder builder) {
+        builder.append(getProcName());
+        if (this.targetServer != null) {
+            builder.append(", worker=");
+            builder.append(this.targetServer);
+        }
+    }
+
+    @Override
+    public String getProcName() {
+        return getClass().getSimpleName() + " " + SplitWALProcedure.getWALNameFromStrPath(getWAL());
+    }
 }

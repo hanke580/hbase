@@ -37,6 +37,13 @@
     <license.bundles.vega>true</license.bundles.vega>
   </properties>
   <dependencies>
+  <dependency>
+   <groupId>org.zlab</groupId>
+   <artifactId>ssg-runtime</artifactId>
+   <version>1.0</version>
+   <scope>system</scope>
+   <systemPath>${project.basedir}/lib/ssgFatJar.jar</systemPath>
+  </dependency>
     <dependency>
       <groupId>org.apache.hbase.thirdparty</groupId>
       <artifactId>hbase-shaded-protobuf</artifactId>

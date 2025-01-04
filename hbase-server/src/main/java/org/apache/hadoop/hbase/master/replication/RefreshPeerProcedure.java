@@ -32,7 +32,6 @@ import org.apache.hadoop.hbase.util.ForeignExceptionUtil;
 import org.apache.yetus.audience.InterfaceAudience;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import org.apache.hadoop.hbase.shaded.protobuf.ProtobufUtil;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.ErrorHandlingProtos;
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.PeerModificationType;
@@ -40,123 +39,119 @@ import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.R
 import org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.RefreshPeerStateData;
 
 @InterfaceAudience.Private
-public class RefreshPeerProcedure extends ServerRemoteProcedure
-  implements PeerProcedureInterface, RemoteProcedure<MasterProcedureEnv, ServerName> {
+public class RefreshPeerProcedure extends ServerRemoteProcedure implements PeerProcedureInterface, RemoteProcedure<MasterProcedureEnv, ServerName> {
 
-  private static final Logger LOG = LoggerFactory.getLogger(RefreshPeerProcedure.class);
+    private static final Logger LOG = LoggerFactory.getLogger(RefreshPeerProcedure.class);
 
-  private String peerId;
-  private PeerOperationType type;
+    private String peerId;
 
-  public RefreshPeerProcedure() {
-  }
+    private PeerOperationType type;
 
-  public RefreshPeerProcedure(String peerId, PeerOperationType type, ServerName targetServer) {
-    this.peerId = peerId;
-    this.type = type;
-    this.targetServer = targetServer;
-  }
-
-  @Override
-  public String getPeerId() {
-    return peerId;
-  }
-
-  @Override
-  public PeerOperationType getPeerOperationType() {
-    return PeerOperationType.REFRESH;
-  }
-
-  private static PeerModificationType toPeerModificationType(PeerOperationType type) {
-    switch (type) {
-      case ADD:
-        return PeerModificationType.ADD_PEER;
-      case REMOVE:
-        return PeerModificationType.REMOVE_PEER;
-      case ENABLE:
-        return PeerModificationType.ENABLE_PEER;
-      case DISABLE:
-        return PeerModificationType.DISABLE_PEER;
-      case UPDATE_CONFIG:
-        return PeerModificationType.UPDATE_PEER_CONFIG;
-      default:
-        throw new IllegalArgumentException("Unknown type: " + type);
+    public RefreshPeerProcedure() {
     }
-  }
 
-  private static PeerOperationType toPeerOperationType(PeerModificationType type) {
-    switch (type) {
-      case ADD_PEER:
-        return PeerOperationType.ADD;
-      case REMOVE_PEER:
-        return PeerOperationType.REMOVE;
-      case ENABLE_PEER:
-        return PeerOperationType.ENABLE;
-      case DISABLE_PEER:
-        return PeerOperationType.DISABLE;
-      case UPDATE_PEER_CONFIG:
-        return PeerOperationType.UPDATE_CONFIG;
-      default:
-        throw new IllegalArgumentException("Unknown type: " + type);
+    public RefreshPeerProcedure(String peerId, PeerOperationType type, ServerName targetServer) {
+        this.peerId = peerId;
+        this.type = type;
+        this.targetServer = targetServer;
     }
-  }
 
-  @Override
-  public Optional<RemoteOperation> remoteCallBuild(MasterProcedureEnv env, ServerName remote) {
-    assert targetServer.equals(remote);
-    return Optional.of(new ServerOperation(this, getProcId(), RefreshPeerCallable.class,
-      RefreshPeerParameter.newBuilder().setPeerId(peerId).setType(toPeerModificationType(type))
-        .setTargetServer(ProtobufUtil.toServerName(remote)).build().toByteArray()));
-  }
-
-  @Override
-  protected boolean complete(MasterProcedureEnv env, Throwable error) {
-    if (error != null) {
-      LOG.warn("Refresh peer {} for {} on {} failed", peerId, type, targetServer, error);
-      return false;
-    } else {
-      LOG.info("Refresh peer {} for {} on {} suceeded", peerId, type, targetServer);
-      return true;
+    @Override
+    public String getPeerId() {
+        return peerId;
     }
-  }
 
-  @Override
-  protected void rollback(MasterProcedureEnv env) throws IOException, InterruptedException {
-    throw new UnsupportedOperationException();
-  }
-
-  @Override
-  protected boolean abort(MasterProcedureEnv env) {
-    // TODO: no correctness problem if we just ignore this, implement later.
-    return false;
-  }
-
-  @Override
-  protected boolean waitInitialized(MasterProcedureEnv env) {
-    return env.waitInitialized(this);
-  }
-
-  @Override
-  protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    RefreshPeerStateData.Builder builder = RefreshPeerStateData.newBuilder();
-    if (this.remoteError != null) {
-      ErrorHandlingProtos.ForeignExceptionMessage fem =
-        ForeignExceptionUtil.toProtoForeignException(remoteError);
-      builder.setError(fem);
+    @Override
+    public PeerOperationType getPeerOperationType() {
+        return PeerOperationType.REFRESH;
     }
-    serializer.serialize(builder.setPeerId(peerId).setType(toPeerModificationType(type))
-      .setTargetServer(ProtobufUtil.toServerName(targetServer)).setState(state).build());
-  }
 
-  @Override
-  protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
-    RefreshPeerStateData data = serializer.deserialize(RefreshPeerStateData.class);
-    peerId = data.getPeerId();
-    type = toPeerOperationType(data.getType());
-    targetServer = ProtobufUtil.toServerName(data.getTargetServer());
-    state = data.getState();
-    if (data.hasError()) {
-      this.remoteError = ForeignExceptionUtil.toException(data.getError());
+    private static PeerModificationType toPeerModificationType(PeerOperationType type) {
+        switch(type) {
+            case ADD:
+                return PeerModificationType.ADD_PEER;
+            case REMOVE:
+                return PeerModificationType.REMOVE_PEER;
+            case ENABLE:
+                return PeerModificationType.ENABLE_PEER;
+            case DISABLE:
+                return PeerModificationType.DISABLE_PEER;
+            case UPDATE_CONFIG:
+                return PeerModificationType.UPDATE_PEER_CONFIG;
+            default:
+                throw new IllegalArgumentException("Unknown type: " + type);
+        }
     }
-  }
+
+    private static PeerOperationType toPeerOperationType(PeerModificationType type) {
+        switch(type) {
+            case ADD_PEER:
+                return PeerOperationType.ADD;
+            case REMOVE_PEER:
+                return PeerOperationType.REMOVE;
+            case ENABLE_PEER:
+                return PeerOperationType.ENABLE;
+            case DISABLE_PEER:
+                return PeerOperationType.DISABLE;
+            case UPDATE_PEER_CONFIG:
+                return PeerOperationType.UPDATE_CONFIG;
+            default:
+                throw new IllegalArgumentException("Unknown type: " + type);
+        }
+    }
+
+    @Override
+    public Optional<RemoteOperation> remoteCallBuild(MasterProcedureEnv env, ServerName remote) {
+        assert targetServer.equals(remote);
+        return Optional.of(new ServerOperation(this, getProcId(), RefreshPeerCallable.class, RefreshPeerParameter.newBuilder().setPeerId(peerId).setType(toPeerModificationType(type)).setTargetServer(ProtobufUtil.toServerName(remote)).build().toByteArray()));
+    }
+
+    @Override
+    protected boolean complete(MasterProcedureEnv env, Throwable error) {
+        if (error != null) {
+            LOG.warn("Refresh peer {} for {} on {} failed", peerId, type, targetServer, error);
+            return false;
+        } else {
+            LOG.info("Refresh peer {} for {} on {} suceeded", peerId, type, targetServer);
+            return true;
+        }
+    }
+
+    @Override
+    protected void rollback(MasterProcedureEnv env) throws IOException, InterruptedException {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    protected boolean abort(MasterProcedureEnv env) {
+        // TODO: no correctness problem if we just ignore this, implement later.
+        return false;
+    }
+
+    @Override
+    protected boolean waitInitialized(MasterProcedureEnv env) {
+        return env.waitInitialized(this);
+    }
+
+    @Override
+    protected void serializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        RefreshPeerStateData.Builder builder = RefreshPeerStateData.newBuilder();
+        if (this.remoteError != null) {
+            ErrorHandlingProtos.ForeignExceptionMessage fem = ForeignExceptionUtil.toProtoForeignException(remoteError);
+            builder.setError(fem);
+        }
+        serializer.serialize(((org.apache.hadoop.hbase.shaded.protobuf.generated.MasterProcedureProtos.RefreshPeerStateData) org.zlab.ocov.tracker.Runtime.update(builder.setPeerId(peerId).setType(toPeerModificationType(type)).setTargetServer(ProtobufUtil.toServerName(targetServer)).setState(state).build(), 144, serializer)));
+    }
+
+    @Override
+    protected void deserializeStateData(ProcedureStateSerializer serializer) throws IOException {
+        RefreshPeerStateData data = serializer.deserialize(RefreshPeerStateData.class);
+        peerId = data.getPeerId();
+        type = toPeerOperationType(data.getType());
+        targetServer = ProtobufUtil.toServerName(data.getTargetServer());
+        state = data.getState();
+        if (data.hasError()) {
+            this.remoteError = ForeignExceptionUtil.toException(data.getError());
+        }
+    }
 }
